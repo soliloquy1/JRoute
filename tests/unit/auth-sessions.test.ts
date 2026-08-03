@@ -47,14 +47,20 @@ test("session token is not stored in plaintext", () => {
   const row = getDb()
     .prepare("SELECT token_hash FROM sessions WHERE token_hash = ?")
     .get(expectedHash) as { token_hash: string };
+  // Positive assertion: the stored value is specifically the SHA-256 digest, not merely
+  // "something other than the token" (which any non-plaintext encoding would satisfy).
+  assert.equal(row.token_hash, expectedHash);
   assert.notEqual(row.token_hash, token);
 });
 
 test("expired session is rejected", () => {
   const token = createSession(1);
-  // Expire all sessions (intentional — this test owns the only live session at this point).
+  // Expire ONLY this test's session. Earlier tests leave live sessions behind, so an
+  // unscoped UPDATE would expire those too and the assertion would pass even if the
+  // expiry check were wrong for this specific row.
+  const expectedHash = createHash("sha256").update(token).digest("hex");
   getDb()
-    .prepare("UPDATE sessions SET expires_at = ?")
-    .run(Date.now() - 1000);
+    .prepare("UPDATE sessions SET expires_at = ? WHERE token_hash = ?")
+    .run(Date.now() - 1000, expectedHash);
   assert.equal(verifySession(token), null);
 });
