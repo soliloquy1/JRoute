@@ -51,7 +51,17 @@ export function verifyApiKey(raw: string): ApiKeyRecord | null {
   const row = getDb().prepare("SELECT * FROM api_keys WHERE key_hash = ?").get(candidate) as
     ApiKeyRow | undefined;
   if (!row) return null;
-  // Both are fixed-length hex digests, so the lengths always match here.
+  // NOTE: this compare is a redundancy check, NOT the primary timing defense.
+  // The row was fetched with `WHERE key_hash = ?` on `candidate`, so a returned
+  // row's key_hash is already byte-identical to it and the false branch is
+  // unreachable today. It is kept only to fail closed if the query above ever
+  // changes to return partial/fuzzy matches.
+  //
+  // Key-existence timing is already observable regardless: an attacker learns
+  // whether a key exists from whether the indexed lookup returns a row at all.
+  // A constant-time compare after a lookup keyed on the secret-derived value
+  // cannot hide that. Both are fixed-length hex digests, so lengths always
+  // match here; the guard exists because timingSafeEqual throws on mismatch.
   const a = Buffer.from(candidate, "hex");
   const b = Buffer.from(row.key_hash, "hex");
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null;

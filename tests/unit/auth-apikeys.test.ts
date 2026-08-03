@@ -1,6 +1,7 @@
 // tests/unit/auth-apikeys.test.ts
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,8 +27,13 @@ test("issued key verifies and carries its config", () => {
 });
 
 test("secret is never stored in plaintext", () => {
-  const { secret } = issueApiKey("a");
-  const row = getDb().prepare("SELECT key_hash FROM api_keys").get() as { key_hash: string };
+  const { id, secret } = issueApiKey("a");
+  // Scope to the row just issued: an unqualified `.get()` returns the first row
+  // in the table, which is a different key issued by an earlier test.
+  const row = getDb().prepare("SELECT key_hash FROM api_keys WHERE id = ?").get(id) as {
+    key_hash: string;
+  };
+  assert.equal(row.key_hash, createHash("sha256").update(secret).digest("hex"));
   assert.notEqual(row.key_hash, secret);
 });
 
