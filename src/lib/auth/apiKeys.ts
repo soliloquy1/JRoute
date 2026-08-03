@@ -1,0 +1,70 @@
+// src/lib/auth/apiKeys.ts
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { getDb } from "../db/bootstrap.ts";
+import type { ApiKeyRecord, ToolMode } from "../db/types.ts";
+
+interface ApiKeyRow {
+  id: number;
+  key_hash: string;
+  label: string;
+  preset_id: number | null;
+  tool_mode: string;
+  rate_limit_per_min: number;
+  created_at: number;
+}
+
+const KEY_PATTERN = /^jr-[0-9a-f]{64}$/;
+
+function hashKey(raw: string): string {
+  return createHash("sha256").update(raw).digest("hex");
+}
+
+function toRecord(row: ApiKeyRow): ApiKeyRecord {
+  return {
+    id: row.id,
+    keyHash: row.key_hash,
+    label: row.label,
+    presetId: row.preset_id,
+    toolMode: row.tool_mode as ToolMode,
+    rateLimitPerMin: row.rate_limit_per_min,
+    createdAt: row.created_at,
+  };
+}
+
+export function issueApiKey(
+  label: string,
+  toolMode: ToolMode = "off"
+): {
+  id: number;
+  secret: string;
+} {
+  const secret = `jr-${randomBytes(32).toString("hex")}`;
+  const info = getDb()
+    .prepare("INSERT INTO api_keys (key_hash, label, tool_mode, created_at) VALUES (?, ?, ?, ?)")
+    .run(hashKey(secret), label, toolMode, Date.now());
+  return { id: Number(info.lastInsertRowid), secret };
+}
+
+export function verifyApiKey(raw: string): ApiKeyRecord | null {
+  if (!KEY_PATTERN.test(raw)) return null;
+  const candidate = hashKey(raw);
+  const row = getDb().prepare("SELECT * FROM api_keys WHERE key_hash = ?").get(candidate) as
+    ApiKeyRow | undefined;
+  if (!row) return null;
+  // Both are fixed-length hex digests, so the lengths always match here.
+  const a = Buffer.from(candidate, "hex");
+  const b = Buffer.from(row.key_hash, "hex");
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+  return toRecord(row);
+}
+
+export function revokeApiKey(id: number): void {
+  getDb().prepare("DELETE FROM api_keys WHERE id = ?").run(id);
+}
+
+export function listApiKeys(): ApiKeyRecord[] {
+  const rows = getDb()
+    .prepare("SELECT * FROM api_keys ORDER BY created_at DESC")
+    .all() as ApiKeyRow[];
+  return rows.map(toRecord);
+}
