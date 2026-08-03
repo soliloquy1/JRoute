@@ -95,6 +95,70 @@ test("does not mangle ordinary hyphenated English", () => {
   assert.ok(sanitizeErrorMessage("risk-assessment done").includes("risk-assessment"));
 });
 
+// --- Fix round 2: all-alpha tail bypass + uncovered token formats ---
+
+test("redacts embedded keys whose tail has NO digits", () => {
+  // The digit requirement was a bypass: an all-alpha key tail survived entirely.
+  assert.ok(!sanitizeErrorMessage("keysk-abcdefghijklmnop").includes("abcdefghij"));
+  assert.ok(!sanitizeErrorMessage("prefixsk-abcdefghijklmnopqrst").includes("abcdefghij"));
+  // jr- is JRoute's own prefix; a future key format with an all-alpha tail must not leak.
+  assert.ok(!sanitizeErrorMessage("prefixjr-abcdefghijklmnopqrst").includes("abcdefghij"));
+});
+
+test("does not mangle long hyphenated English phrases", () => {
+  // Guards the discriminator: a rule based on total tail length (rather than unbroken
+  // run length) would redact all of these, because the tail charset spans hyphens.
+  for (const phrase of [
+    "disk-space-usage-report",
+    "risk-assessment-methodology-review",
+    "state-of-the-art-disk-subsystem",
+    "multi-task-scheduler-service",
+    "task-id-12345 missing",
+  ]) {
+    assert.ok(!sanitizeErrorMessage(phrase).includes("[redacted]"), phrase);
+  }
+});
+
+test("common non-secret hyphenated/versioned tokens survive intact", () => {
+  for (const tok of [
+    "covid-19",
+    "utf-8",
+    "base64-encoded",
+    "re-evaluate",
+    "x-request-id",
+    "HTTP/1.1 404",
+    "2026-08-03",
+    "v1.2.3-rc1",
+    "550e8400-e29b-41d4-a716-446655440000",
+  ]) {
+    assert.ok(sanitizeErrorMessage(tok).includes(tok), `${tok} -> ${sanitizeErrorMessage(tok)}`);
+  }
+});
+
+test("redacts a JWT concatenated into a word", () => {
+  const out = sanitizeErrorMessage(
+    "tokeneyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NSJ9.SflKxwRJSMeKKF2QT4"
+  );
+  assert.ok(!out.includes("eyJzdWIi"), out);
+  assert.ok(!out.includes("SflKxwRJ"), out);
+});
+
+test("redacts GitHub fine-grained PATs and Slack enterprise tokens", () => {
+  const pat = sanitizeErrorMessage(
+    "tok github_pat_11ABCDE0Y0abcdefghijkl_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 x"
+  );
+  assert.ok(!pat.includes("11ABCDE0Y0"), pat);
+
+  const xoxe = sanitizeErrorMessage("tok xoxe-1-ABCDEFGHIJKLMNOPQRSTUVWXYZ012345 x");
+  assert.ok(!xoxe.includes("ABCDEFGHIJ"), xoxe);
+});
+
+test("strips SpiderMonkey frames with spaces in the function name", () => {
+  const out = sanitizeErrorMessage("Boom\nmy fn@/srv/app/file.js:1:2\nfn@/srv/b.js:3:4");
+  assert.ok(!out.includes("fn@"), out);
+  assert.ok(out.includes("Boom"), out);
+});
+
 test("redacts non-OpenAI provider key formats", () => {
   const google = sanitizeErrorMessage("key AIzaSyD-9tSrke72I6e6uuEm9dkFmEr5UJc7Q0E here");
   assert.ok(!google.includes("AIzaSyD-9tSrke72I6"), google);

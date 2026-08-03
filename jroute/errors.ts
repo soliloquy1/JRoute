@@ -35,26 +35,44 @@ const REDACTIONS: Array<[RegExp, string]> = [
   // removing the whole line here keeps later patterns from emitting a half-redacted frame).
   // V8/Node: "    at fn (/path/file.js:1:2)" through end of line.
   [/^[ \t]*at\s.{0,300}$/gm, ""],
-  // SpiderMonkey/JavaScriptCore: "fn@/path/file.js:1:2" through end of line.
-  [/^[ \t]*[A-Za-z0-9_$.<>[\]]{0,120}@[^\s]{1,300}$/gm, ""],
+  // SpiderMonkey/JavaScriptCore: "fn@/path/file.js:1:2" through end of line. The pre-"@"
+  // class is any non-"@" char so function names containing spaces ("my fn@/x.js:1:2") are
+  // covered too. Over-matching is bounded by requiring the post-"@" run to be unbroken
+  // through end of line, which is frame-shaped; a prose line mentioning an address mid
+  // sentence ("Contact support@example.com now") is left alone.
+  [/^[ \t]{0,20}[^\n@]{0,120}@[^\s]{1,300}$/gm, ""],
 
   // --- Credentials. All run before the URL pattern so a bare token is redacted as a
   // token (not swallowed into a generic "[url]") and before path patterns so a token
   // containing "/" is not mistaken for a path.
   [/\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{4,400}/gi, "[redacted]"],
   // JWTs: three base64url segments. Fixed arity, single-class segments — no nesting.
-  [/\beyJ[A-Za-z0-9_-]{6,800}\.[A-Za-z0-9_-]{6,800}\.[A-Za-z0-9_-]{6,800}/g, "[redacted]"],
+  // Unanchored: "eyJ" is base64 for '{"' and does not occur in English, so a leading \b
+  // would only create a bypass ("tokeneyJhbGci...") without preventing a false positive.
+  [/eyJ[A-Za-z0-9_-]{6,800}\.[A-Za-z0-9_-]{6,800}\.[A-Za-z0-9_-]{6,800}/g, "[redacted]"],
   // GitHub / Slack / Google. Prefixes are distinctive enough to match unanchored.
+  // github_pat_ (fine-grained PATs) is a separate rule: "gh[pousr]_" cannot match it,
+  // because the char after "gh" is "i". It is now GitHub's recommended token format.
+  [/github_pat_[A-Za-z0-9_]{20,100}/g, "[redacted]"],
   [/gh[pousr]_[A-Za-z0-9]{10,255}/g, "[redacted]"],
-  [/xox[baprs]-[A-Za-z0-9-]{10,300}/g, "[redacted]"],
+  // "e" covers Slack enterprise tokens (xoxe-, xoxe.xoxp-), hence the [-.] separator.
+  [/xox[baprse][-.][A-Za-z0-9-]{10,300}/g, "[redacted]"],
   [/AIzaSy[A-Za-z0-9_-]{10,40}/g, "[redacted]"],
   // Provider-style keys, anchored at a word boundary — permissive tail.
   [/\b(?:sk|pk|jr|xai|gsk)-[A-Za-z0-9_-]{4,200}/g, "[redacted]"],
   // Same prefixes WITHOUT a boundary, to catch keys concatenated into an upstream string
-  // ("...keysk-1234..."). A bare unanchored rule would mangle ordinary hyphenated English
-  // ("task-manager" -> "ta[redacted]"), so the tail must be >=6 chars AND contain a digit.
-  // The lookahead is bounded and single-class, so it adds no backtracking dimension.
-  [/(?:sk|pk|jr|xai|gsk)-(?=[A-Za-z0-9_-]{0,200}\d)[A-Za-z0-9_-]{6,200}/g, "[redacted]"],
+  // ("...keysk-abcdef..."). A bare unanchored rule would mangle ordinary hyphenated English
+  // ("task-manager" -> "ta[redacted]"), so the tail must contain a qualifying UNBROKEN
+  // alphanumeric run: >=16 chars of any composition, or >=6 chars including a digit.
+  // The run is what discriminates. Hyphens BREAK it, which is the whole point: real keys
+  // are long unbroken strings, while hyphenated English is short dictionary words joined by
+  // hyphens ("disk-space-usage-report" -> longest run "report", 6). Requiring only overall
+  // tail length instead would mangle exactly those phrases, since the tail charset spans
+  // hyphens. Every quantifier is bounded, so the lookahead cannot blow up.
+  [
+    /(?:sk|pk|jr|xai|gsk)-(?=[A-Za-z0-9_-]{0,40}(?:[A-Za-z0-9_]{16,200}|[A-Za-z0-9_]{5,200}\d|\d[A-Za-z0-9_]{5,200}))[A-Za-z0-9_-]{5,200}/g,
+    "[redacted]",
+  ],
 
   // --- Locations. URLs first: a URL contains a POSIX-looking path component, so running
   // the path pattern first would emit "[path]" inside an otherwise-intact URL.
