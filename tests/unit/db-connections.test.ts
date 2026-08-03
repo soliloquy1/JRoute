@@ -61,6 +61,33 @@ test("orders connections by priority ascending", () => {
   );
 });
 
+test("flags an undecryptable api_key instead of reporting it as absent", () => {
+  const id = createConnection("openai", "a", "k1");
+  // Well-formed `enc:v1:<iv>:<ciphertext>:<authTag>` — looksEncrypted() accepts it
+  // (encryption.ts:111 only checks the prefix) but the auth tag cannot validate
+  // under the current key. This is what a rotated/lost key looks like on disk.
+  const undecryptable = `enc:v1:${"a".repeat(32)}:${"b".repeat(16)}:${"c".repeat(32)}`;
+  getDb().prepare("UPDATE connections SET api_key = ? WHERE id = ?").run(undecryptable, id);
+
+  const conn = listConnections("openai")[0];
+  assert.equal(conn.apiKey, null);
+  assert.equal(conn.credentialDecryptFailed, true, "must flag a ciphertext that failed to decrypt");
+});
+
+test("a genuinely absent api_key is not flagged as a decrypt failure", () => {
+  const id = createConnection("openai", "a", "k1");
+  getDb().prepare("UPDATE connections SET api_key = NULL WHERE id = ?").run(id);
+
+  const conn = listConnections("openai")[0];
+  assert.equal(conn.apiKey, null);
+  assert.equal(conn.credentialDecryptFailed, false, "absent key is not a decrypt failure");
+});
+
+test("a healthy connection is not flagged as a decrypt failure", () => {
+  createConnection("openai", "a", "k1");
+  assert.equal(listConnections("openai")[0].credentialDecryptFailed, false);
+});
+
 test("markCooldown and clearCooldown move cooldownUntil", () => {
   const id = createConnection("openai", "a", "k1");
   markCooldown(id, 1893456000000, "429 rate limited");
