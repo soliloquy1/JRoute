@@ -190,6 +190,94 @@ test("strips bare filenames with line numbers", () => {
   assert.ok(!out.includes("44:9"), out);
 });
 
+// --- Fix round 3: the frame rule must not eat prose that merely contains "@" ---
+
+test("keeps legitimate error text that contains an @", () => {
+  // A permissive pre-"@" class with no required ":line" tail deleted any line whose last
+  // token contained an "@" — including most single-line JSON error bodies. buildErrorBody
+  // then replaced the emptied message with a bare fallback, so the chatter saw "Internal
+  // error" and the operator lost every diagnostic.
+  const cases: Array<[string, string]> = [
+    [
+      `{"error":{"code":403,"message":"Requests from referer are blocked. Contact admin@yourorg.io"}}`,
+      "Requests from referer are blocked",
+    ],
+    ["Cannot find module @scope/pkg", "@scope/pkg"],
+    // @cf/... is the literal shape of a Cloudflare Workers AI model id. The "/meta/..."
+    // tail is still shortened to [path] by the unrelated POSIX-path rule — pre-existing
+    // behavior, byte-identical to 5c0e1c4ad — but the line is no longer deleted outright.
+    ["model not found: @cf/meta/llama-3-8b-instruct", "model not found: @cf"],
+    ["402 Payment Required for account owner@gmail.com", "402 Payment Required"],
+    ["Unexpected token @Injectable", "@Injectable"],
+    ["reported by @janitorai", "@janitorai"],
+    ["Contact support@example.com now", "support@example.com"],
+    ["npm ERR! 404 '@types/node@^20.0.0' is not in this registry", "@types/node"],
+  ];
+  for (const [input, mustSurvive] of cases) {
+    const out = sanitizeErrorMessage(input);
+    assert.ok(out.includes(mustSurvive), `${input} -> ${JSON.stringify(out)}`);
+  }
+});
+
+test("an upstream JSON error body survives buildErrorBody instead of becoming a fallback", () => {
+  const body = buildErrorBody(
+    403,
+    `{"error":{"code":403,"message":"Requests from referer are blocked. Contact admin@yourorg.io"}}`
+  );
+  assert.notEqual(body.error.message, "Forbidden");
+  assert.ok(body.error.message.includes("Requests from referer are blocked"), body.error.message);
+});
+
+test("still strips every SpiderMonkey/JSC frame shape", () => {
+  // The ":line[:col]" tail is what separates a frame from prose, so pin the shapes that
+  // must keep matching — including a bare filename with no directory component.
+  for (const frame of [
+    "my fn@/srv/app/file.js:1:2",
+    "fn@/srv/b.js:3:4",
+    "fn@http://h/app/f.js:1:2",
+    "<anonymous>@/x.js:9",
+    "promise callback*handler@/a/b/c.js:12:34",
+    "e/</t@https://cdn.example.com/a.min.js:2:3891",
+    "fn@app.js:1:2",
+  ]) {
+    const out = sanitizeErrorMessage(`Boom\n${frame}`);
+    assert.equal(out, "Boom", `${frame} -> ${JSON.stringify(out)}`);
+  }
+});
+
+test("removes DSN-shaped lines, which carry credentials the URL rule does not cover", () => {
+  // The URL rule only handles http/https, so a redis:// or postgres:// DSN would otherwise
+  // reach the chatter with its password intact.
+  const redis = sanitizeErrorMessage("connect ECONNREFUSED redis://user:pass@10.0.0.1:6379");
+  assert.ok(!redis.includes("pass"), redis);
+  const pg = sanitizeErrorMessage("auth failed postgres://admin:hunter2@db.internal:5432");
+  assert.ok(!pg.includes("hunter2"), pg);
+});
+
+// --- Fix round 3: "_" deliberately does not break the key run ---
+
+test("underscore does not break the key run, so underscore-delimited keys still redact", () => {
+  // This is the load-bearing direction: real key bodies contain "_", so excluding it from
+  // the run charset would let them through. Measured cost of excluding it: an
+  // underscore-delimited body in 4-char groups went from 0/20000 missed to 20000/20000.
+  assert.ok(!sanitizeErrorMessage("keysk-ABCD_EFGH_IJKL_MNOP_QRST").includes("ABCD_EFGH"));
+  assert.ok(!sanitizeErrorMessage("keyjr-abcdefgh_ijklmnop_qrstuvwx").includes("abcdefgh"));
+});
+
+test("accepted over-redaction: long snake_case / CamelCase tails after a key prefix", () => {
+  // Cosmetic, never a leak, and the direct consequence of the test above. Pinned so that
+  // changing it is a deliberate decision rather than an accident. "ExecutionContextDestroyed"
+  // is indistinguishable by shape from the all-alpha key tail the >=16 rule exists to catch.
+  for (const phrase of [
+    "disk-space_usage_report",
+    "task-queue_worker_pool_exhausted",
+    "husk-ExecutionContextDestroyed",
+    "risk-AssessmentControllerFactory",
+  ]) {
+    assert.ok(sanitizeErrorMessage(phrase).includes("[redacted]"), phrase);
+  }
+});
+
 test("redaction patterns do not backtrack catastrophically", () => {
   // Hostile upstream text: every pattern must stay bounded. A ReDoS here hangs the
   // whole Node event loop, not just one request.
@@ -203,6 +291,21 @@ test("redaction patterns do not backtrack catastrophically", () => {
     "/ab".repeat(3000) + ":1:2",
     "x".repeat(5000) + ".ts:1:1",
     "f@" + "a".repeat(10000),
+    // Round 3: the frame tail now backtracks between [^\s]{1,300} and :\d{1,7}, so stress
+    // near-miss lines that force the engine to try every colon before failing.
+    (("f".repeat(100) + "@" + "a:1".repeat(90)) as string).repeat(1) + "\n",
+    Array(2000)
+      .fill("f".repeat(100) + "@" + "a:1".repeat(90))
+      .join("\n"),
+    Array(2000)
+      .fill("f".repeat(100) + "@" + "b".repeat(280) + ":x")
+      .join("\n"),
+    Array(2000)
+      .fill("my fn@" + "/ab".repeat(90))
+      .join("\n"),
+    Array(2000)
+      .fill("@" + "a".repeat(299) + ":1:2")
+      .join("\n"),
   ];
   for (const input of hostile) {
     const started = Date.now();

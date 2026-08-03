@@ -36,11 +36,23 @@ const REDACTIONS: Array<[RegExp, string]> = [
   // V8/Node: "    at fn (/path/file.js:1:2)" through end of line.
   [/^[ \t]*at\s.{0,300}$/gm, ""],
   // SpiderMonkey/JavaScriptCore: "fn@/path/file.js:1:2" through end of line. The pre-"@"
-  // class is any non-"@" char so function names containing spaces ("my fn@/x.js:1:2") are
-  // covered too. Over-matching is bounded by requiring the post-"@" run to be unbroken
-  // through end of line, which is frame-shaped; a prose line mentioning an address mid
-  // sentence ("Contact support@example.com now") is left alone.
-  [/^[ \t]{0,20}[^\n@]{0,120}@[^\s]{1,300}$/gm, ""],
+  // class is any non-"@" char so function names containing spaces ("my fn@/x.js:1:2") and
+  // async markers ("promise callback*handler@...") are covered.
+  //
+  // The ":line[:col]" tail is REQUIRED, and it is the only thing keeping this rule off
+  // ordinary prose. Without it, a permissive pre-"@" class deletes any line whose last
+  // token contains an "@" — which is most single-line JSON error bodies and a lot of
+  // legitimate upstream text ('..."Contact admin@yourorg.io"}}', "Cannot find module
+  // @scope/pkg", "model not found: @cf/meta/llama-3-8b-instruct" — @cf/... is the literal
+  // shape of a Cloudflare Workers AI model id). Those all reached the chatter as a bare
+  // "Internal error", because buildErrorBody substitutes the fallback for an emptied
+  // message. Ending in ":<digits>" is a structural property of every SpiderMonkey/JSC
+  // frame and of essentially no prose, so it separates the two populations cheaply.
+  //
+  // Residual over-match: a line ending in "token@host:port". That is DSN-shaped
+  // ("redis://user:pass@10.0.0.1:6379"), and those carry credentials the URL rule does not
+  // cover (it only handles http/https), so removing them is wanted rather than tolerated.
+  [/^[ \t]{0,20}[^\n@]{0,120}@[^\s]{1,300}:\d{1,7}(?::\d{1,7})?$/gm, ""],
 
   // --- Credentials. All run before the URL pattern so a bare token is redacted as a
   // token (not swallowed into a generic "[url]") and before path patterns so a token
@@ -69,6 +81,28 @@ const REDACTIONS: Array<[RegExp, string]> = [
   // hyphens ("disk-space-usage-report" -> longest run "report", 6). Requiring only overall
   // tail length instead would mangle exactly those phrases, since the tail charset spans
   // hyphens. Every quantifier is bounded, so the lookahead cannot blow up.
+  //
+  // Two measured trade-offs are accepted here; both were re-tested in round 3.
+  //
+  // 1. UNBROKEN RUNS OF 6-9 CHARS whose digit sits with fewer than 5 alphanumerics on both
+  //    sides ("sk-ab1cde") are not matched, so a key of that shape glued into a word still
+  //    leaks. This IS a regression against the earlier "tail >=6 and contains a digit"
+  //    rule. Closing it needs "any 6-wide alnum window containing a digit", which doubled
+  //    over-redaction across the 85 dictionary words ending in a key prefix (ask, task,
+  //    disk, risk, mask, kiosk, asterisk...) and started eating ordinary infrastructure
+  //    vocabulary: md5hash, sha1sum, utf8mode, utf16le, ipv6only, eth0down, http2tls,
+  //    ec2host, win32api, arm64mac, tls13err. Weighed against a 6-9 character key body,
+  //    which no proxied provider issues (OpenAI 48+, Anthropic ~100, Google 39), and note
+  //    the anchored rule above still catches any of these when properly delimited.
+  //
+  // 2. "_" deliberately does NOT break the run, so a long snake_case or CamelCase tail is
+  //    over-redacted ("disk-space_usage_report", "husk-ExecutionContextDestroyed"). That is
+  //    cosmetic, never a leak. Excluding "_" from the run charset was measured and rejected:
+  //    it multiplies missed keys on random base64url bodies (32-char: 10 -> 45 per 20k;
+  //    JRoute's own jr-: 7 -> 38) and misses underscore-delimited key bodies outright
+  //    (4-char groups: 0/20000 -> 20000/20000). It also would not fix the CamelCase half,
+  //    which contains no "_" at all and is indistinguishable by shape from the all-alpha
+  //    key tail this rule exists to catch.
   [
     /(?:sk|pk|jr|xai|gsk)-(?=[A-Za-z0-9_-]{0,40}(?:[A-Za-z0-9_]{16,200}|[A-Za-z0-9_]{5,200}\d|\d[A-Za-z0-9_]{5,200}))[A-Za-z0-9_-]{5,200}/g,
     "[redacted]",
