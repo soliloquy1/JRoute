@@ -1,13 +1,11 @@
 #!/usr/bin/env sh
 if ! command -v npx >/dev/null 2>&1; then
   echo "⚠️  npx not found in PATH — skipping pre-commit hooks"
-  echo "   Run 'npm run lint && npm run check:any-budget:t11' manually before pushing."
+  echo "   Run 'npm run lint' manually before pushing."
   exit 0
 fi
 
-# Cheap, deterministic local gates (re-enabled). Slower checks (i18n drift,
-# openapi coverage/security-tiers, env-doc sync) run in CI to keep commits fast.
+# Prettier + ESLint on staged files. The inherited OmniRoute gates
+# (docs-sync, any-budget, tracked-artifacts) were removed with their scripts:
+# they referenced files that no longer exist in JRoute and enforced nothing.
 npx lint-staged
-node scripts/check/check-docs-sync.mjs
-npm run check:any-budget:t11
-node scripts/check/check-tracked-artifacts.mjs

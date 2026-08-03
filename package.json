@@ -76,8 +76,7 @@
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --import tsx/esm --test tests/unit/**/*.test.ts",
-    "test:coverage": "node --import tsx/esm --test --experimental-test-coverage tests/unit/**/*.test.ts",
-    "check:any-budget:t11": "node scripts/check/check-t11-any-budget.mjs"
+    "test:coverage": "node --import tsx/esm --test --experimental-test-coverage tests/unit/**/*.test.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -191,7 +190,7 @@
   "lint-staged": {
     "*.{js,jsx,ts,tsx,mjs}": [
       "prettier --write",
-      "eslint --fix --no-error-on-unmatched-pattern --no-warn-ignored --suppressions-location config/quality/eslint-suppressions.json"
+      "eslint --fix --no-error-on-unmatched-pattern --no-warn-ignored"
     ],
     "*.{json,md,yml,yaml,css}": [
       "prettier --write"
