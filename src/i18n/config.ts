@@ -1,37 +1,17 @@
-// SOURCE OF TRUTH: `config/i18n.json` (also consumed by the docs translation
-// pipeline in `scripts/i18n/run-translation.mjs`). Keep this file as a thin
-// typed adapter — do NOT add hand-maintained locale lists here.
+// JRoute ships a single locale (English). The upstream `config/i18n.json`
+// catalogue of 43 locales was removed with the rest of the OmniRoute tree, and
+// `src/i18n/messages/` contains only `en.json`, so the locale set is declared
+// inline here rather than read from a config file that no longer exists.
 
-import i18nConfig from "../../config/i18n.json" with { type: "json" };
-
-type RawLocaleEntry = {
-  code: string;
-  label: string;
-  name: string;
-  native?: string;
-  english?: string;
-  flag: string;
-};
-
-type RawI18nConfig = {
-  default: string;
-  rtl: readonly string[];
-  uiOnly?: readonly string[];
-  docsExcluded?: readonly string[];
-  locales: readonly RawLocaleEntry[];
-};
-
-const config = i18nConfig as RawI18nConfig;
-
-export const LOCALES = config.locales.map((l) => l.code) as readonly string[];
+export const LOCALES = ["en"] as const;
 export type Locale = (typeof LOCALES)[number];
-export const DEFAULT_LOCALE: Locale = config.default as Locale;
+export const DEFAULT_LOCALE: Locale = "en";
 
 /**
  * Display metadata for every locale, kept in the same shape the codebase has
- * historically consumed (`code`, `label`, `name`, `flag`). We additionally
- * expose `native` and `english` as aliases for new call sites that want a
- * stable field name regardless of the underlying display string.
+ * historically consumed (`code`, `label`, `name`, `flag`), plus `native` and
+ * `english` aliases for call sites that want a stable field name regardless of
+ * the underlying display string.
  */
 export const LANGUAGES: readonly {
   code: Locale;
@@ -40,15 +20,17 @@ export const LANGUAGES: readonly {
   native: string;
   english: string;
   flag: string;
-}[] = config.locales.map((entry) => ({
-  code: entry.code as Locale,
-  label: entry.label,
-  name: entry.name,
-  native: entry.native ?? entry.name,
-  english: entry.english ?? entry.name,
-  flag: entry.flag,
-}));
+}[] = [
+  {
+    code: "en",
+    label: "EN",
+    name: "English",
+    native: "English",
+    english: "English",
+    flag: "🇺🇸",
+  },
+];
 
-export const RTL_LOCALES: readonly Locale[] = config.rtl as readonly Locale[];
+export const RTL_LOCALES: readonly Locale[] = [];
 
 export const LOCALE_COOKIE = "NEXT_LOCALE";
