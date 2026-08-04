@@ -9,13 +9,20 @@ import { execute, cooldownMsFor } from "./executor.ts";
 import { keepaliveStream, sseHeaders } from "./sse.ts";
 import type { ApiKeyRecord } from "../src/lib/db/types.ts";
 
-export const ChatRequestSchema = z
-  .object({
-    model: z.string().min(1),
-    messages: z.array(z.object({ role: z.string(), content: z.unknown() })).min(1),
-    stream: z.boolean().optional(),
-  })
-  .passthrough();
+// `looseObject` (not `object`) at BOTH levels. A plain `z.object` strips unknown keys,
+// and the message element is what matters: stripping there silently deletes
+// `tool_call_id` from a `role: "tool"` message, `tool_calls` from an assistant message,
+// and `name` from a user message. OpenAI 400s a tool message with no `tool_call_id`, so
+// a stripped field renders as an error to whoever is chatting, and any multi-turn tool
+// conversation the client replays is quietly gutted. `.passthrough()` is the Zod 3 form
+// and is `@deprecated` in the installed Zod 4.4.3 (schemas.d.cts:460) in favour of
+// `z.looseObject()`; both were verified to preserve the extra keys, so use the
+// non-deprecated one.
+export const ChatRequestSchema = z.looseObject({
+  model: z.string().min(1),
+  messages: z.array(z.looseObject({ role: z.string(), content: z.unknown() })).min(1),
+  stream: z.boolean().optional(),
+});
 
 export interface HandleChatDeps {
   fetchImpl: typeof fetch;
@@ -53,8 +60,16 @@ export async function handleChat(
     return jsonError(503, "No available connection");
   }
 
-  let lastStatus = 502;
-  let lastMessage = "All connections failed";
+  // A real upstream attempt and a skipped-before-dialling connection are tracked
+  // SEPARATELY. Sharing one `lastMessage` let a decrypt-failed connection sitting
+  // *behind* a genuinely failing one rewrite the failure story: the status stayed the
+  // real 503 while the message became "credential could not be decrypted", so the
+  // response and the `usage_logs` row Plan 6's dashboard reads both recorded the wrong
+  // cause. The credential reason is only surfaced when no real attempt ever produced one.
+  let lastStatus: number | null = null;
+  let lastMessage: string | null = null;
+  let lastConnectionId: number | null = null;
+  let skippedDecryptFailed = false;
 
   for (let attempt = 0; attempt < candidates.length; attempt += 1) {
     const connection = candidates[attempt];
@@ -65,7 +80,7 @@ export async function handleChat(
     // get their turn. If every candidate is in this state, the operator gets the
     // distinct "could not be decrypted" reason rather than a generic upstream failure.
     if (connection.credentialDecryptFailed) {
-      lastMessage = "Connection credential could not be decrypted";
+      skippedDecryptFailed = true;
       continue;
     }
 
@@ -121,21 +136,33 @@ export async function handleChat(
 
     lastStatus = result.status || 502;
     lastMessage = result.errorMessage ?? "Upstream error";
+    // Attribute the failure row to the connection that actually produced it, so the
+    // dashboard can answer "which key is 503-ing" instead of just "something failed".
+    lastConnectionId = connection.id;
 
     if (!result.retryable) break;
     markCooldown(connection.id, Date.now() + cooldownMsFor(result.status, attempt), lastMessage);
   }
 
+  // A real attempt's outcome always wins. The credential reason is the fallback only
+  // when every candidate was skipped before a request was ever sent.
+  const failureStatus = lastStatus ?? 502;
+  const failureMessage =
+    lastMessage ??
+    (skippedDecryptFailed
+      ? "Connection credential could not be decrypted"
+      : "All connections failed");
+
   logUsage({
     apiKeyId: key.id,
     providerId,
-    connectionId: null,
+    connectionId: lastConnectionId,
     model: String(body.model ?? ""),
     promptTokens: null,
     outputTokens: null,
     latencyMs: Date.now() - startedAt,
     toolRounds: 0,
-    error: lastMessage,
+    error: failureMessage,
   });
-  return jsonError(lastStatus, lastMessage);
+  return jsonError(failureStatus, failureMessage);
 }
