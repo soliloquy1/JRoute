@@ -1,4 +1,4 @@
-import { partitionBlocks } from "../types.ts";
+import { orderInjections, partitionBlocks } from "../types.ts";
 import type {
   ConvertRequestParams,
   OpenAIMessage,
@@ -115,6 +115,59 @@ function mapSamplingParams(body: Record<string, unknown>): Record<string, unknow
   return out;
 }
 
+interface AnthropicMessage {
+  role: string;
+  content: AnthropicContentBlock[];
+}
+
+/**
+ * Places depth-injections into message CONTENT (design spec §6.5).
+ *
+ * Anthropic has no mid-conversation system role — verified: "there is no `system` role for
+ * input messages in the Messages API" — so an injection cannot be a message of its own the
+ * way it can on OpenAI-shaped targets. It becomes content inside an existing message.
+ *
+ * Two failure modes this function must avoid, per design spec §1.1:
+ *   1. Hoisting it into `system` (teleport to top) — handled by the tag split upstream.
+ *   2. Appending everything to the last message (teleport to bottom) — handled HERE by
+ *      honouring `depth`. Product spec §6.4's wording ("appended into the last user
+ *      message content, at depth position") names two destinations; the second is correct.
+ *
+ * Assistant-turn redirect: if the message at `depth` is an assistant turn, the injection
+ * moves to the nearest PRECEDING user turn. Putting lorebook text inside an assistant turn
+ * makes the model believe it said those words. With a leading greeting and alternating
+ * history this fires on roughly half of all depths, so it is a main path, not an edge.
+ */
+export function placeInjections(
+  messages: AnthropicMessage[],
+  injections: Array<Extract<TaggedBlock, { tag: "depth-injection" }>>
+): AnthropicMessage[] {
+  if (injections.length === 0 || messages.length === 0) return messages;
+
+  // Clone so the caller's array (and each content array) is never mutated.
+  const out: AnthropicMessage[] = messages.map((m) => ({ ...m, content: [...m.content] }));
+
+  for (const inj of orderInjections(injections)) {
+    // depth 0 == the final message; depth N == N messages from the end. Clamp to the top
+    // of the history when depth exceeds the conversation (product spec §6.3 #8).
+    const targetIdx = Math.max(0, out.length - 1 - inj.depth);
+
+    // Redirect off an assistant turn onto the nearest preceding user turn. If there is
+    // none (the conversation opens with the character's greeting), fall forward to the
+    // first user turn rather than giving up and using the assistant one.
+    let idx = targetIdx;
+    while (idx >= 0 && out[idx].role !== "user") idx -= 1;
+    if (idx < 0) {
+      idx = out.findIndex((m) => m.role === "user");
+      if (idx < 0) idx = targetIdx; // No user turn at all — nothing better available.
+    }
+
+    out[idx].content.push(...toContentBlocks(inj.content));
+  }
+
+  return out;
+}
+
 function hoistedSystem(
   systemBlocks: TaggedBlock[],
   messages: OpenAIMessage[]
@@ -140,17 +193,19 @@ function hoistedSystem(
 
 export const anthropicConverter: RequestConverter = {
   convertRequest({ model, maxTokens, body, blocks }: ConvertRequestParams) {
-    const { systemBlocks } = partitionBlocks(blocks);
+    const { systemBlocks, injections } = partitionBlocks(blocks);
     const incoming = (body.messages as OpenAIMessage[]) ?? [];
 
     const system = hoistedSystem(systemBlocks, incoming);
 
-    const messages = incoming
+    const mapped = incoming
       .filter((m) => m.role !== "system")
       .map((m) => ({
         role: m.role === "assistant" ? "assistant" : "user",
         content: toContentBlocks(m.content),
       }));
+
+    const messages = placeInjections(mapped, injections);
 
     // Anthropic REQUIRES max_tokens; OpenAI treats it as optional and Janitor never sends
     // it. Honour a smaller client value, clamp anything above the model ceiling — going
