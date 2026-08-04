@@ -1,38 +1,19 @@
 {
-  "name": "omniroute",
-  "version": "3.8.50",
-  "description": "Unified AI router with 290 providers, RTK+Caveman compression, auto fallback, MCP/A2A, desktop, PWA, and OpenAI-compatible APIs.",
+  "name": "jroute",
+  "version": "0.1.0",
+  "description": "Self-hosted reverse proxy for JanitorAI: one OpenAI-compatible endpoint in front of your own LLM providers.",
   "type": "module",
-  "bin": {
-    "omniroute": "bin/omniroute.mjs",
-    "omniroute-reset-password": "bin/reset-password.mjs"
-  },
   "files": [
-    "bin/",
-    "dist/",
-    "@omniroute/",
+    "jroute/",
+    "src/app/",
     "src/lib/",
     "src/models/",
-    "src/server/",
     "src/shared/",
-    "src/sse/",
     "src/types/",
     ".env.example",
-    "scripts/build/postinstall.mjs",
-    "scripts/build/fixTlsClientNodeBinary.mjs",
-    "bin/cli/runtime/",
-    "scripts/postinstall.mjs",
-    "scripts/build/postinstallSupport.mjs",
-    "scripts/build/runtime-env.mjs",
-    "scripts/build/colocateOptionals.mjs",
-    "scripts/build/sync-env.mjs",
-    "scripts/dev/responses-ws-proxy.mjs",
-    "scripts/dev/tls-options.mjs",
-    "scripts/check/check-supported-node-runtime.ts",
-    "scripts/dev/sync-env.mjs",
-    "scripts/build/native-binary-compat.mjs",
-    "scripts/build/build-next-isolated.mjs",
-    "scripts/build/runtime-env.mjs",
+    "next.config.mjs",
+    "postcss.config.mjs",
+    "tsconfig.json",
     "README.md",
     "LICENSE",
     "!**/__tests__/**",
@@ -48,27 +29,19 @@
     "node": ">=22.22.2 <23 || >=24.0.0 <27"
   },
   "keywords": [
-    "ai",
-    "router",
+    "janitorai",
     "proxy",
-    "openai",
-    "claude",
-    "anthropic",
-    "gemini",
-    "fallback",
-    "cursor",
-    "cline",
-    "codex",
+    "reverse-proxy",
+    "openai-compatible",
     "llm",
-    "auto-fallback"
+    "self-hosted"
   ],
   "license": "MIT",
-  "author": "diegosouzapw",
   "repository": {
     "type": "git",
-    "url": "https://github.com/diegosouzapw/OmniRoute"
+    "url": "https://github.com/niste-stuff/JRoute"
   },
-  "homepage": "https://omniroute.online",
+  "homepage": "https://github.com/niste-stuff/JRoute",
   "scripts": {
     "dev": "next dev -p 20128",
     "build": "next build",
@@ -202,7 +175,6 @@
       "@swc/core",
       "better-sqlite3",
       "esbuild",
-      "omniroute",
       "sharp"
     ]
   },

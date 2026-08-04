@@ -1,3 +1,7 @@
+// `toNumberOrNull` is the canonical coercion (#7879); the local `toNumber` this file used
+// to define was byte-for-byte the same shape and is barred by no-restricted-syntax.
+import { toNumberOrNull } from "@/shared/utils/numeric";
+
 export type QuotaTokenStatus = "valid" | "expiring" | "expired" | "refreshing";
 
 export interface QuotaProviderEntry {
@@ -27,15 +31,6 @@ export interface QuotaResponse {
 
 const TOKEN_STATUS_VALUES: QuotaTokenStatus[] = ["valid", "expiring", "expired", "refreshing"];
 
-function toNumber(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && value.trim() !== "") {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return null;
-}
-
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
@@ -56,14 +51,14 @@ export function sanitizeQuotaProvider(input: unknown): QuotaProviderEntry {
       ? source.connectionId
       : "unknown";
 
-  const quotaTotalRaw = toNumber(source.quotaTotal);
+  const quotaTotalRaw = toNumberOrNull(source.quotaTotal);
   const quotaTotal = quotaTotalRaw !== null && quotaTotalRaw >= 0 ? quotaTotalRaw : null;
 
-  const quotaUsedRaw = toNumber(source.quotaUsed) ?? 0;
+  const quotaUsedRaw = toNumberOrNull(source.quotaUsed) ?? 0;
   const quotaUsed =
     quotaTotal !== null ? clamp(quotaUsedRaw, 0, quotaTotal) : Math.max(0, quotaUsedRaw);
 
-  let percentRemainingRaw = toNumber(source.percentRemaining);
+  let percentRemainingRaw = toNumberOrNull(source.percentRemaining);
   if (percentRemainingRaw === null) {
     if (quotaTotal && quotaTotal > 0) {
       percentRemainingRaw = ((quotaTotal - quotaUsed) / quotaTotal) * 100;
