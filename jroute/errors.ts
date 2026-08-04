@@ -49,9 +49,17 @@ const REDACTIONS: Array<[RegExp, string]> = [
   // message. Ending in ":<digits>" is a structural property of every SpiderMonkey/JSC
   // frame and of essentially no prose, so it separates the two populations cheaply.
   //
-  // Residual over-match: a line ending in "token@host:port". That is DSN-shaped
-  // ("redis://user:pass@10.0.0.1:6379"), and those carry credentials the URL rule does not
-  // cover (it only handles http/https), so removing them is wanted rather than tolerated.
+  // Residual over-match, stated precisely: ANY line whose final token is "…@…:<digits>"
+  // is removed whole. This is a purely structural test, NOT a credential-selective one —
+  // it is neither sound nor complete with respect to credentials, in both directions:
+  //   - non-credential lines of that shape are eaten identically ("upstream peer
+  //     admin@example.com:443", "queue worker@node1:5672" -> "");
+  //   - a credential DSN survives intact whenever it is not the line's final token
+  //     ("connect redis://user:pass@10.0.0.1:6379 failed" keeps "pass").
+  // It is tolerated because the frame rule must end in ":<digits>" to stay off prose at
+  // all (see above), not because it targets secrets. Tightening it to be credential-aware
+  // was attempted and measured: the candidate both failed an existing test and still
+  // leaked "pass" from the non-final-token DSN, so the pattern stays as-is.
   [/^[ \t]{0,20}[^\n@]{0,120}@[^\s]{1,300}:\d{1,7}(?::\d{1,7})?$/gm, ""],
 
   // --- Credentials. All run before the URL pattern so a bare token is redacted as a
@@ -111,6 +119,17 @@ const REDACTIONS: Array<[RegExp, string]> = [
   // --- Locations. URLs first: a URL contains a POSIX-looking path component, so running
   // the path pattern first would emit "[path]" inside an otherwise-intact URL.
   [/\bhttps?:\/\/[^\s]{1,500}/g, "[url]"],
+  // Bare IPv4 host, optional ":port". Node surfaces the operator's private address
+  // verbatim in the most common upstream failure there is ("connect ECONNREFUSED
+  // 10.0.0.7:443"), and JanitorAI renders that body straight to whoever is chatting.
+  // Runs after the URL rule so an IP inside an http(s) URL is already "[url]".
+  // Four dot-separated groups is the discriminator: three-group versions ("1.2.3",
+  // "semver 10.20.30"), "utf-8", "covid-19", "HTTP/1.1 404", ISO dates, UUIDs and
+  // model ids ("gpt-4o-mini") all lack the fourth group and survive byte-identical.
+  // Bounded on every quantifier. IPv6 and bare DNS names are NOT covered — separating
+  // an internal hostname from ordinary dotted prose is a genuinely harder call and is
+  // deliberately left open rather than guessed at.
+  [/\b\d{1,3}(?:\.\d{1,3}){3}(?::\d{1,5})?\b/g, "[address]"],
   // Absolute POSIX and Windows paths.
   [/(?:\/[A-Za-z0-9._-]{1,64}){2,12}(?::\d{1,6}){0,2}/g, "[path]"],
   [/\b[A-Za-z]:\\(?:[A-Za-z0-9._-]{1,64}\\){0,12}[A-Za-z0-9._-]{1,64}/g, "[path]"],

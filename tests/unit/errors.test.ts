@@ -27,6 +27,42 @@ test("strips URLs with credentials or query strings", () => {
   assert.ok(!out.includes("secret123"), out);
 });
 
+test("redacts bare IPv4 host:port, the most common upstream failure shape", () => {
+  // "connect ECONNREFUSED 10.0.0.7:443" is what Node hands us when the operator's own
+  // upstream is down, and JanitorAI renders the error body straight to the chatter.
+  const noDottedQuad = /\b\d{1,3}(?:\.\d{1,3}){3}\b/;
+  for (const input of [
+    "connect ECONNREFUSED 10.0.0.7:443",
+    "connect ECONNREFUSED 192.168.1.55:443",
+    "connect ECONNREFUSED 127.0.0.1:11434",
+    "connect ETIMEDOUT 172.16.4.9:8080",
+  ]) {
+    const out = sanitizeErrorMessage(input);
+    assert.ok(!noDottedQuad.test(out), `leaked address: ${out}`);
+    assert.ok(out.includes("[address]"), out);
+  }
+  // Reaches the response body, not just the sanitizer.
+  const body = buildErrorBody(502, "connect ECONNREFUSED 10.0.0.7:443");
+  assert.ok(!noDottedQuad.test(body.error.message), body.error.message);
+});
+
+test("dotted non-address prose survives the IPv4 rule byte-identical", () => {
+  // Four dot-separated groups is the discriminator; three-group versions and the rest
+  // of ordinary error vocabulary must pass through untouched.
+  for (const phrase of [
+    "covid-19",
+    "utf-8",
+    "HTTP/1.1 404",
+    "version 1.2.3",
+    "semver 10.20.30",
+    "2026-08-03T12:00:00Z",
+    "550e8400-e29b-41d4-a716-446655440000",
+    "gpt-4o-mini",
+  ]) {
+    assert.equal(sanitizeErrorMessage(phrase), phrase);
+  }
+});
+
 test("handles non-string input without throwing", () => {
   assert.equal(typeof sanitizeErrorMessage(new Error("plain")), "string");
   assert.equal(typeof sanitizeErrorMessage(null), "string");
@@ -245,9 +281,11 @@ test("still strips every SpiderMonkey/JSC frame shape", () => {
   }
 });
 
-test("removes DSN-shaped lines, which carry credentials the URL rule does not cover", () => {
-  // The URL rule only handles http/https, so a redis:// or postgres:// DSN would otherwise
-  // reach the chatter with its password intact.
+test("removes any line whose final token is `…@…:<digits>`, DSN-shaped ones included", () => {
+  // Structural, not credential-selective: the frame rule removes the whole line for ANY
+  // trailing "…@…:<digits>" token. These DSNs are covered only because they sit at the end
+  // of the line; the same credential survives intact when a word follows it. See the
+  // residual-over-match note in jroute/errors.ts for the precise class and why it stays.
   const redis = sanitizeErrorMessage("connect ECONNREFUSED redis://user:pass@10.0.0.1:6379");
   assert.ok(!redis.includes("pass"), redis);
   const pg = sanitizeErrorMessage("auth failed postgres://admin:hunter2@db.internal:5432");
