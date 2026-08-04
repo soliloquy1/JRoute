@@ -316,9 +316,9 @@ test("preserves extra message fields (tool_call_id, tool_calls, name) on the way
 // previous tests still pass (they all send messages with a content field).
 test("accepts an assistant tool-call message with no content key, rejects a message with no role", async () => {
   createConnection("openai", "primary", "sk-1");
-  let called = false;
-  const fetchImpl: typeof fetch = async () => {
-    called = true;
+  let sentBody: { messages: Array<Record<string, unknown>> } | null = null;
+  const fetchImpl: typeof fetch = async (_url, init) => {
+    sentBody = JSON.parse(String(init?.body)) as { messages: Array<Record<string, unknown>> };
     return new Response(JSON.stringify({ choices: [] }), {
       status: 200,
       headers: { "content-type": "application/json" },
@@ -341,7 +341,16 @@ test("accepts an assistant tool-call message with no content key, rejects a mess
     { fetchImpl }
   );
   assert.equal(res.status, 200, "tool-call message without content must be accepted");
-  assert.ok(called, "request must have reached upstream");
+  assert.ok(sentBody !== null, "request must have reached upstream");
+  // Status 200 alone does not prove the message SURVIVED the schema — pin the exact wire
+  // shape. Deliberately NOT asserting `!("content" in msg)` separately: JSON.stringify
+  // drops an undefined value, so a materialised `content: undefined` is indistinguishable
+  // from an absent one at this layer and such an assertion could never fail. deepEqual on
+  // the wire shape is the honest form — it still catches a stripped tool_calls.
+  assert.deepEqual(sentBody!.messages[1], {
+    role: "assistant",
+    tool_calls: [{ id: "c1", type: "function", function: { name: "f" } }],
+  });
 
   // message with no role must still be rejected (schema guard for content alone is not enough)
   const res2 = await handleChat(post({ model: "gpt-4", messages: [{ content: "hi" }] }), key(), {
