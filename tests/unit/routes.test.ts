@@ -161,18 +161,23 @@ test("GET /v1/models OMITS models from disabled providers", async () => {
   seedOpenAi();
   createConnection("openai", "test-conn", "sk-test");
   upsertProvider({
-    id: "disabled-backend",
-    name: "Disabled Backend",
+    id: "anthropic",
+    name: "Anthropic",
     kind: "apikey",
-    baseUrl: "https://disabled.example/v1",
-    wireFormat: "openai",
+    baseUrl: "https://api.anthropic.com",
+    wireFormat: "anthropic",
     enabled: false,
   });
+  createConnection("anthropic", "disabled-conn", "sk-ant-test");
   const res = await models.GET(new Request("https://x/v1/models"));
   const body = (await res.json()) as { data: Array<{ id: string }> };
   assert.ok(
     body.data.some((m) => m.id === "gpt-4o"),
     "enabled providers must still list their models"
+  );
+  assert.ok(
+    !body.data.some((m) => m.id === "claude-sonnet-4-6"),
+    "disabled providers must not list their models"
   );
 });
 
