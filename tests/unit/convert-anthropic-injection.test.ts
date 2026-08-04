@@ -170,7 +170,7 @@ test("an injection is appended as a block, never string-concatenated", () => {
 // registered in the OPPOSITE order from what depth-ordering requires.
 // ---------------------------------------------------------------------------
 
-test("deeper depth still sorts before a shallower one even when registered afterward, on a shared target message", () => {
+test("deeper depth sorts before shallower even when registered later, same target", () => {
   // history(): [u1, a1, u2, a2, u3]. depth 1 -> a2 (assistant) -> redirects to u2.
   // depth 2 -> u2 directly. Registered SHALLOW (depth 1) first, DEEP (depth 2) second —
   // the opposite of depth order — so only a real depth-sort (not registration order, and
@@ -211,4 +211,47 @@ test("an all-assistant history with an over-deep injection does not crash", () =
   const messages = out.messages as OutMessage[];
   const carrier = messages.findIndex((m) => texts(m).includes("LORE"));
   assert.ok(carrier >= 0, "the injection must land somewhere, not throw or vanish");
+});
+
+// ---------------------------------------------------------------------------
+// Two more collision shapes — also NOT required by the brief. Reviewer-requested
+// hardening: these two scenarios were traced ad hoc while investigating the two gaps
+// above and confirmed correct, but had no permanent regression test locking in that
+// correctness. A future refactor (e.g. one introducing per-injection index mutation,
+// mirroring the OpenAI-side splice pattern) could silently reintroduce a same-index
+// ordering bug with nothing here to catch it.
+// ---------------------------------------------------------------------------
+
+test("same-depth redirects converge without breaking registration order", () => {
+  // history(): [u1, a1, u2, a2, u3]. Two SEPARATE depth-1 injections both target a2
+  // (assistant) and both redirect to the same message, u2. Equal depth means
+  // orderInjections must not reorder them — registration order is the only tiebreaker
+  // (product spec #9) — so the first-registered injection must still come first even
+  // though both went through the assistant-turn redirect onto the identical index.
+  const out = convert(history(), [inject(1, "REDIRECT_A"), inject(1, "REDIRECT_B")]);
+  const messages = out.messages as OutMessage[];
+  const u2 = messages[2];
+  assert.equal(u2.role, "user");
+  const t = texts(u2);
+  assert.ok(
+    t.indexOf("REDIRECT_A") < t.indexOf("REDIRECT_B"),
+    "two same-depth injections converging on one message via redirect keep registration order"
+  );
+});
+
+test("double clamp: deeper depth still sorts first despite equal clamped index", () => {
+  // history(): [u1, a1, u2, a2, u3] (length 5). depth 50 and depth 99 both compute a
+  // negative pre-clamp target and both clamp to index 0. Ordering must be keyed on the
+  // RAW pre-clamp depth (99 is deeper than 50), not on the post-clamp index (identical,
+  // 0, for both) — otherwise two different over-depth injections landing on the same
+  // clamped slot would silently fall back to registration order instead of depth order.
+  const out = convert(history(), [inject(50, "CLAMP_SHALLOWER"), inject(99, "CLAMP_DEEPER")]);
+  const messages = out.messages as OutMessage[];
+  const first = messages[0];
+  assert.equal(first.role, "user");
+  const t = texts(first);
+  assert.ok(
+    t.indexOf("CLAMP_DEEPER") < t.indexOf("CLAMP_SHALLOWER"),
+    "depth 99 must precede depth 50 even though both clamp to the same index"
+  );
 });
