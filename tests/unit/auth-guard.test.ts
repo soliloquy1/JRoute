@@ -52,3 +52,15 @@ test("CORS is open on /v1 and closed elsewhere", () => {
   const admin = corsHeadersFor("/api/providers", "https://janitorai.com");
   assert.equal(admin["Access-Control-Allow-Origin"], undefined);
 });
+
+// Addition A: pin that the guard matches startsWith("/v1/") not startsWith("/v1").
+// A future edit removing the trailing slash would open CORS on "/v1anything" (CSRF boundary)
+// with no test failing. The mutant was verified: replacing "/v1/" with "/v1" makes this fail.
+test("CORS is closed on the near-miss path /v1 (no trailing slash)", () => {
+  const v1NoSlash = corsHeadersFor("/v1", "https://janitorai.com");
+  assert.equal(
+    v1NoSlash["Access-Control-Allow-Origin"],
+    undefined,
+    "corsHeadersFor must require a trailing slash — /v1 is not a proxy path"
+  );
+});

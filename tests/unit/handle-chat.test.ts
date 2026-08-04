@@ -311,6 +311,80 @@ test("preserves extra message fields (tool_call_id, tool_calls, name) on the way
   assert.equal(messages[2].tool_call_id, "c1");
 });
 
+// Addition C: content is optional on messages (OpenAI permits it on assistant tool-call messages).
+// Mutant verified: reverting to `z.unknown()` (non-optional) makes this test fail while all
+// previous tests still pass (they all send messages with a content field).
+test("accepts an assistant tool-call message with no content key, rejects a message with no role", async () => {
+  createConnection("openai", "primary", "sk-1");
+  let called = false;
+  const fetchImpl: typeof fetch = async () => {
+    called = true;
+    return new Response(JSON.stringify({ choices: [] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  // assistant message with tool_calls and NO content — OpenAI explicitly permits this shape
+  const res = await handleChat(
+    post({
+      model: "gpt-4",
+      messages: [
+        { role: "user", content: "call the tool" },
+        {
+          role: "assistant",
+          tool_calls: [{ id: "c1", type: "function", function: { name: "f" } }],
+        },
+      ],
+    }),
+    key(),
+    { fetchImpl }
+  );
+  assert.equal(res.status, 200, "tool-call message without content must be accepted");
+  assert.ok(called, "request must have reached upstream");
+
+  // message with no role must still be rejected (schema guard for content alone is not enough)
+  const res2 = await handleChat(post({ model: "gpt-4", messages: [{ content: "hi" }] }), key(), {
+    fetchImpl,
+  });
+  assert.equal(res2.status, 400, "a message with no role must be rejected with 400");
+});
+
+// Addition B: guard that the OUTER z.looseObject stays loose.
+// Reverting the outer schema to z.object strips top-level fields (temperature,
+// max_tokens, stop, tools, any vendor extension) from the body sent upstream —
+// and the 12 tests above stay green because they only assert on message-level keys.
+// Mutant was verified: changing the outer z.looseObject to z.object makes this fail.
+test("preserves top-level unknown fields (temperature, max_tokens, custom extension) upstream", async () => {
+  createConnection("openai", "primary", "sk-1");
+  let sentBody: Record<string, unknown> | null = null;
+  const fetchImpl: typeof fetch = async (_url, init) => {
+    sentBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return new Response(JSON.stringify({ choices: [] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  await handleChat(
+    post({
+      model: "gpt-4",
+      messages: [{ role: "user", content: "hi" }],
+      temperature: 0.7,
+      max_tokens: 256,
+      stop: ["\n"],
+      x_custom_vendor_flag: true,
+    }),
+    key(),
+    { fetchImpl }
+  );
+  assert.ok(sentBody !== null, "fetchImpl must have been called");
+  // If the outer schema is z.object (not looseObject), these keys are silently stripped.
+  assert.equal(sentBody!.temperature, 0.7, "temperature must reach upstream");
+  assert.equal(sentBody!.max_tokens, 256, "max_tokens must reach upstream");
+  assert.deepEqual(sentBody!.stop, ["\n"], "stop must reach upstream");
+  assert.equal(sentBody!.x_custom_vendor_flag, true, "vendor extension must reach upstream");
+});
+
 test("skips connections with failed credential decryption and falls back to healthy ones", async () => {
   // Insert a raw encrypted-looking value directly (bypasses encrypt()) to simulate
   // a rotated key — connections.ts will set credentialDecryptFailed = true for it.

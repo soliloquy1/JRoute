@@ -20,7 +20,10 @@ import type { ApiKeyRecord } from "../src/lib/db/types.ts";
 // non-deprecated one.
 export const ChatRequestSchema = z.looseObject({
   model: z.string().min(1),
-  messages: z.array(z.looseObject({ role: z.string(), content: z.unknown() })).min(1),
+  // `content` is optional: the OpenAI API permits omitting it on assistant tool-call
+  // messages ({ role: "assistant", tool_calls: [...] }) — the field is not present in
+  // that object at all, and `z.unknown()` (non-optional) would reject it with 400.
+  messages: z.array(z.looseObject({ role: z.string(), content: z.unknown().optional() })).min(1),
   stream: z.boolean().optional(),
 });
 
