@@ -75,8 +75,8 @@
     "start": "next start -p 20128",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx/esm --test tests/unit/**/*.test.ts",
-    "test:coverage": "node --import tsx/esm --test --experimental-test-coverage tests/unit/**/*.test.ts"
+    "test": "node --import tsx/esm --test 'tests/unit/**/*.test.ts'",
+    "test:coverage": "node --import tsx/esm --test --experimental-test-coverage 'tests/unit/**/*.test.ts'"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
