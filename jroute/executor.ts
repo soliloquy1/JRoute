@@ -1,8 +1,47 @@
 // jroute/executor.ts
 import { sanitizeErrorMessage } from "./errors.ts";
-import type { Provider, Connection } from "../src/lib/db/types.ts";
+import type { Provider, Connection, WireFormat } from "../src/lib/db/types.ts";
 
-const RETRYABLE = new Set([408, 429, 500, 502, 503, 504]);
+/**
+ * Per-wire-format transport differences. The `openai` entry reproduces the values this
+ * file hardcoded before Plan 2a, so registering a descriptor is additive for that path.
+ *
+ * Anthropic's three required request headers are `x-api-key`, `anthropic-version`, and
+ * `content-type`; the endpoint is POST /v1/messages. Appending `/chat/completions` to any
+ * baseUrl cannot reach it, which is why this indirection exists.
+ */
+export interface WireDescriptor {
+  /** Appended to the provider's baseUrl (which has trailing slashes stripped). */
+  path: string;
+  /** Auth headers for this format. Kept as a function because the header NAME differs. */
+  authHeaders(apiKey: string): Record<string, string>;
+  /** Always-sent extra headers, e.g. Anthropic's required API version. */
+  extraHeaders: Record<string, string>;
+}
+
+const ANTHROPIC_VERSION = "2023-06-01";
+
+export const WIRE_DESCRIPTORS: Partial<Record<WireFormat, WireDescriptor>> = {
+  openai: {
+    path: "/chat/completions",
+    authHeaders: (apiKey) => ({ authorization: `Bearer ${apiKey}` }),
+    extraHeaders: {},
+  },
+  anthropic: {
+    path: "/v1/messages",
+    authHeaders: (apiKey) => ({ "x-api-key": apiKey }),
+    extraHeaders: { "anthropic-version": ANTHROPIC_VERSION },
+  },
+  // gemini: Plan 2c.
+};
+
+export function describeWire(wireFormat: WireFormat): WireDescriptor | null {
+  return WIRE_DESCRIPTORS[wireFormat] ?? null;
+}
+
+// 529 is Anthropic's `overloaded_error` — its most common transient failure. Without it
+// the failover loop breaks on exactly the error failover exists for.
+const RETRYABLE = new Set([408, 429, 500, 502, 503, 504, 529]);
 const BASE_COOLDOWN_MS = 3000;
 const MAX_COOLDOWN_MS = 300000;
 
@@ -20,13 +59,29 @@ export interface ExecuteResult {
   json: unknown;
   errorMessage: string | null;
   retryable: boolean;
+  /** Upstream `retry-after` in ms, when the header was present and parseable. */
+  retryAfterMs: number | null;
 }
 
 export function classifyStatus(status: number): { retryable: boolean } {
   return { retryable: RETRYABLE.has(status) };
 }
 
-export function cooldownMsFor(_status: number, attempt: number): number {
+/**
+ * Cooldown before this connection is retried.
+ *
+ * An upstream `retry-after` hint wins over local backoff when present — the provider knows
+ * its own reset window better than we do. Still clamped to MAX_COOLDOWN_MS so a hostile or
+ * mistaken header cannot park a connection for hours.
+ */
+export function cooldownMsFor(
+  _status: number,
+  attempt: number,
+  retryAfterMs: number | null = null
+): number {
+  if (retryAfterMs !== null && retryAfterMs > 0) {
+    return Math.min(retryAfterMs, MAX_COOLDOWN_MS);
+  }
   return Math.min(BASE_COOLDOWN_MS * 2 ** attempt, MAX_COOLDOWN_MS);
 }
 
@@ -50,7 +105,33 @@ function makeAbortError(): Error {
 
 /** A client that hung up has nobody left to show a message to, and must not fail over. */
 function abortedResult(): ExecuteResult {
-  return { ok: false, status: 0, stream: null, json: null, errorMessage: null, retryable: false };
+  return {
+    ok: false,
+    status: 0,
+    stream: null,
+    json: null,
+    errorMessage: null,
+    retryable: false,
+    retryAfterMs: null,
+  };
+}
+
+/**
+ * Parses `retry-after`. HTTP allows either delta-seconds or an HTTP-date; both are
+ * accepted here. Anything unparseable, negative, or absent yields null so the caller
+ * falls back to exponential backoff.
+ */
+function parseRetryAfter(res: Response): number | null {
+  const raw = res.headers.get("retry-after");
+  if (!raw) return null;
+
+  const seconds = Number(raw.trim());
+  if (Number.isFinite(seconds)) return seconds > 0 ? Math.round(seconds * 1000) : null;
+
+  const at = Date.parse(raw);
+  if (Number.isNaN(at)) return null;
+  const delta = at - Date.now();
+  return delta > 0 ? delta : null;
 }
 
 /**
@@ -79,7 +160,24 @@ export async function execute(
   fetchImpl: typeof fetch = fetch
 ): Promise<ExecuteResult> {
   const { provider, connection, body, signal } = params;
-  const url = `${provider.baseUrl.replace(/\/+$/, "")}/chat/completions`;
+
+  const wire = describeWire(provider.wireFormat);
+  if (!wire) {
+    // A provider row whose wireFormat has no descriptor is a configuration error, not an
+    // upstream failure: retrying it on another connection of the same provider would fail
+    // identically, so it is terminal.
+    return {
+      ok: false,
+      status: 0,
+      stream: null,
+      json: null,
+      errorMessage: `Unsupported wire format: ${provider.wireFormat}`,
+      retryable: false,
+      retryAfterMs: null,
+    };
+  }
+
+  const url = `${provider.baseUrl.replace(/\/+$/, "")}${wire.path}`;
 
   let res: Response;
   try {
@@ -88,7 +186,8 @@ export async function execute(
       signal,
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${connection.apiKey ?? ""}`,
+        ...wire.extraHeaders,
+        ...wire.authHeaders(connection.apiKey ?? ""),
       },
       body: JSON.stringify(body),
     });
@@ -101,6 +200,7 @@ export async function execute(
       json: null,
       errorMessage: sanitizeErrorMessage(err instanceof Error ? err.message : String(err)),
       retryable: true,
+      retryAfterMs: null,
     };
   }
 
@@ -122,6 +222,7 @@ export async function execute(
       json: null,
       errorMessage: sanitizeErrorMessage(text) || `Upstream returned ${res.status}`,
       retryable: classifyStatus(res.status).retryable,
+      retryAfterMs: parseRetryAfter(res),
     };
   }
 
@@ -133,6 +234,7 @@ export async function execute(
       json: null,
       errorMessage: null,
       retryable: false,
+      retryAfterMs: null,
     };
   }
 
@@ -152,5 +254,6 @@ export async function execute(
     json,
     errorMessage: null,
     retryable: false,
+    retryAfterMs: null,
   };
 }
