@@ -1,6 +1,5 @@
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { normalizeBasePath } from "./scripts/build/normalizeBasePath.mjs";
 
 const distDir = process.env.NEXT_DIST_DIR || ".build/next";
 const projectRoot = dirname(fileURLToPath(import.meta.url));
@@ -47,10 +46,9 @@ function readTimeoutMs(...values) {
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  basePath: normalizeBasePath(process.env.OMNIROUTE_BASE_PATH),
-  env: {
-    NEXT_PUBLIC_OMNIROUTE_BASE_PATH: normalizeBasePath(process.env.OMNIROUTE_BASE_PATH),
-  },
+  // No basePath: JRoute is deployed at the origin root. The subpath-deployment support
+  // came from OmniRoute and depended on scripts/build/normalizeBasePath.mjs, which does
+  // not exist on this branch — importing it broke `next build`/`dev`/`start` outright.
   distDir,
   output: "standalone",
   compress: true,
