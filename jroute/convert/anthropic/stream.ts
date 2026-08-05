@@ -197,7 +197,7 @@ export function convertAnthropicEvent(
 export interface AnthropicStreamCompletion {
   promptTokens: number | null;
   outputTokens: number | null;
-  reason: "completed" | "upstream-closed";
+  reason: "completed" | "upstream-closed" | "client-hangup";
 }
 
 export interface AnthropicStreamOptions {
@@ -217,9 +217,10 @@ export interface AnthropicStreamOptions {
  *
  * `onComplete` fires EXACTLY ONCE, from one of: natural termination (`message_stop`,
  * `reason: "completed"`), a fail-loud event or upstream error mid-stream (`reason:
- * "upstream-closed"`), or the source closing before `message_stop` ever arrived (also
- * `"upstream-closed"`, via `flush`). This task does not add a `cancel()` handler — Task 8
- * adds the client-hangup case.
+ * "upstream-closed"`), the source closing before `message_stop` ever arrived (also
+ * `"upstream-closed"`, via `flush`), or the consumer cancelling mid-stream (post-dial
+ * client hangup, `reason: "client-hangup"`, via `cancel`). The `terminated` flag ensures
+ * `onComplete` fires exactly once regardless of which path triggers first.
  */
 export function createAnthropicStreamTransform(
   options: AnthropicStreamOptions
@@ -230,7 +231,11 @@ export function createAnthropicStreamTransform(
   let buffer = "";
   let terminated = false;
 
-  return new TransformStream<Uint8Array, Uint8Array>({
+  // `cancel` on Transformer is a WHATWG Streams spec addition not yet reflected in
+  // TypeScript's lib.dom.d.ts for this project's TS version. The cast lets us declare
+  // it without losing the rest of the Transformer<I,O> shape. Runtime support is
+  // confirmed on Node.js 22+ (the project's minimum engine).
+  const transformer: Transformer<Uint8Array, Uint8Array> & { cancel?: () => void } = {
     transform(chunk, controller) {
       if (terminated) return;
       try {
@@ -301,5 +306,22 @@ export function createAnthropicStreamTransform(
         });
       }
     },
-  });
+    cancel() {
+      // The CONSUMER (keepaliveStream -> the client's live HTTP connection) went away
+      // before the stream finished naturally. Tokens already accounted in `state` were
+      // genuinely spent upstream — report them with a distinct reason so the operator's
+      // usage log isn't silently missing this cost (design spec §9's post-dial hangup
+      // rule). Unlike `transform`/`flush`, this fires from the READABLE side being
+      // cancelled by its reader, not from anything the producer did.
+      if (!terminated) {
+        terminated = true;
+        options.onComplete({
+          promptTokens: state.promptTokens || null,
+          outputTokens: state.outputTokens || null,
+          reason: "client-hangup",
+        });
+      }
+    },
+  };
+  return new TransformStream<Uint8Array, Uint8Array>(transformer);
 }

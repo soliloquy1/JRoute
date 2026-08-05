@@ -433,3 +433,101 @@ test("a source that closes without message_stop reports upstream-closed via flus
     reason: "upstream-closed",
   });
 });
+
+// ---------------------------------------------------------------------------
+// cancel() handler — post-dial client hangup (Task 8)
+// ---------------------------------------------------------------------------
+
+test("cancelling the transform reports client-hangup with partial tokens, not completed or upstream-closed", async () => {
+  const encoder = new TextEncoder();
+  const sequence =
+    'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_01H","usage":{"input_tokens":8}}}\n\n' +
+    'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}\n\n';
+  // No message_delta / message_stop in this sequence — the "connection" is still open when
+  // the consumer cancels, simulating a real mid-stream client disconnect.
+  let completed: unknown = null;
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(sequence));
+      // Deliberately never closes — the consumer below cancels instead.
+    },
+  });
+  const transformed = source.pipeThrough(
+    createAnthropicStreamTransform({
+      model: "claude-sonnet-4-6",
+      onComplete: (r) => {
+        completed = r;
+      },
+    })
+  );
+  const reader = transformed.getReader();
+  await reader.read(); // consume the role/content chunks so the pipe is flowing
+  await reader.cancel("client went away");
+  assert.deepEqual(completed, { promptTokens: 8, outputTokens: null, reason: "client-hangup" });
+});
+
+test("cancelling before message_start captured anything reports null tokens, not zero", () => {
+  let completed: unknown = null;
+  const transform = createAnthropicStreamTransform({
+    model: "claude-sonnet-4-6",
+    onComplete: (r) => {
+      completed = r;
+    },
+  });
+  // Drive `cancel()` directly against the transformer's writable side without ever calling
+  // `transform()`, to isolate the "hangup before any frame arrived" case.
+  const writer = transform.writable.getWriter();
+  void writer.abort("client went away immediately");
+  return transform.readable.cancel("client went away immediately").then(() => {
+    assert.deepEqual(completed, {
+      promptTokens: null,
+      outputTokens: null,
+      reason: "client-hangup",
+    });
+  });
+});
+
+test("cancel mid-stream then upstream closes fires onComplete exactly once", async () => {
+  // This test verifies the exactly-once contract for the cancel() path. When a consumer
+  // cancels mid-stream, cancel() fires and sets terminated=true. The source close that
+  // follows (simulating the upstream eventually responding to the pipe cancellation) cannot
+  // trigger a second onComplete because: (a) the cancel propagation closes the writable
+  // side of the TransformStream before flush() can run, and (b) flush()'s own
+  // `if (!terminated)` guard additionally blocks any second fire. The test asserts
+  // calls===1 as the invariant the production `if (!terminated)` guard upholds.
+  const encoder = new TextEncoder();
+  const sequence =
+    'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_01N","usage":{"input_tokens":5}}}\n\n';
+  let calls = 0;
+  let sourceController!: ReadableStreamDefaultController<Uint8Array>;
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      sourceController = controller;
+      controller.enqueue(encoder.encode(sequence));
+      // Does NOT close yet — consumer cancels first.
+    },
+  });
+  const transformed = source.pipeThrough(
+    createAnthropicStreamTransform({
+      model: "claude-sonnet-4-6",
+      onComplete: () => {
+        calls++;
+      },
+    })
+  );
+  const reader = transformed.getReader();
+  await reader.read(); // consume the role chunk — stream is flowing but not terminated
+  await reader.cancel("client went away"); // fires cancel() → sets terminated=true → calls=1
+  // Attempt to close the source after cancel (mimics upstream eventually closing).
+  // The writable side is already cancelled so this throws — the catch suppresses it.
+  try {
+    sourceController.close();
+  } catch {
+    /* expected: pipe already cancelled */
+  }
+  assert.equal(
+    calls,
+    1,
+    "onComplete must fire exactly once even when the source is closed after cancel"
+  );
+});
