@@ -85,7 +85,7 @@ test("a SUCCESSFUL streaming POST carries BOTH CORS and its SSE headers", async 
       method: "POST",
       headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
       body: JSON.stringify({
-        model: "gpt-4",
+        model: "gpt-4o",
         stream: true,
         messages: [{ role: "user", content: "hi" }],
       }),
