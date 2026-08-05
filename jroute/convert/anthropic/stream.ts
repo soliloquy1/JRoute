@@ -110,11 +110,24 @@ export function convertAnthropicEvent(
 
   if (event === "message_start") {
     const message = parsed.message as
-      { id?: string; usage?: { input_tokens?: number } } | undefined;
+      | {
+          id?: string;
+          usage?: {
+            input_tokens?: number;
+            cache_creation_input_tokens?: number;
+            cache_read_input_tokens?: number;
+          };
+        }
+      | undefined;
     state.id = message?.id ?? state.id;
-    // INTENTIONALLY INCOMPLETE (see task note above): only input_tokens, not the two cache
-    // fields. Task 4 fixes this — do not "fix it early."
-    state.promptTokens = message?.usage?.input_tokens ?? 0;
+    const usage = message?.usage;
+    // Sums all three prompt-side fields (design spec §8.1) — cache tokens are NOT included
+    // in input_tokens, so reading input_tokens alone silently undercounts every cached
+    // request.
+    state.promptTokens =
+      (usage?.input_tokens ?? 0) +
+      (usage?.cache_creation_input_tokens ?? 0) +
+      (usage?.cache_read_input_tokens ?? 0);
     return {
       chunks: [baseChunk(state, { role: "assistant", content: "" })],
       usage: null,

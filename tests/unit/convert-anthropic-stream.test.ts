@@ -166,3 +166,51 @@ test("an entirely unrecognized event name fails loudly", () => {
   assert.equal(result.terminate, true);
   assert.ok(result.upstreamError);
 });
+
+// ---------------------------------------------------------------------------
+// cache tokens (Task 4)
+// ---------------------------------------------------------------------------
+
+test("message_start sums input_tokens with both cache token fields", () => {
+  const state = createStreamState("claude-sonnet-4-6");
+  convertAnthropicEvent(
+    "message_start",
+    JSON.stringify({
+      type: "message_start",
+      message: {
+        id: "msg_01CACHE",
+        usage: { input_tokens: 10, cache_creation_input_tokens: 100, cache_read_input_tokens: 50 },
+      },
+    }),
+    state
+  );
+  // message_delta reads back state.promptTokens into the final usage chunk — assert
+  // through that, since state itself is intentionally opaque to callers.
+  const deltaResult = convertAnthropicEvent(
+    "message_delta",
+    '{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}',
+    state
+  );
+  const usageChunk = deltaResult.chunks[1] as { usage: { prompt_tokens: number } };
+  assert.equal(
+    usageChunk.usage.prompt_tokens,
+    160,
+    "10 + 100 + 50 — omitting cache fields undercounts"
+  );
+});
+
+test("message_start with no cache fields at all still works (uncached request)", () => {
+  const state = createStreamState("claude-sonnet-4-6");
+  convertAnthropicEvent(
+    "message_start",
+    '{"type":"message_start","message":{"id":"msg_01PLAIN","usage":{"input_tokens":25}}}',
+    state
+  );
+  const deltaResult = convertAnthropicEvent(
+    "message_delta",
+    '{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}',
+    state
+  );
+  const usageChunk = deltaResult.chunks[1] as { usage: { prompt_tokens: number } };
+  assert.equal(usageChunk.usage.prompt_tokens, 25);
+});
