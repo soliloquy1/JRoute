@@ -277,7 +277,7 @@ export const anthropicConverter: RequestConverter = {
     // Anthropic REQUIRES max_tokens; OpenAI treats it as optional and Janitor never sends
     // it. Honour a smaller client value, clamp anything above the model ceiling — going
     // over is a 400 in the other direction.
-    const requested = typeof body.max_tokens === "number" ? body.max_tokens : maxTokens;
+    const requested = Number.isFinite(body.max_tokens) ? (body.max_tokens as number) : maxTokens;
     const max_tokens = Math.max(1, Math.min(requested, maxTokens));
 
     const out: Record<string, unknown> = {

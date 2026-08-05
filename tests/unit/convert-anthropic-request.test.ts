@@ -41,10 +41,22 @@ test("never emits a role:system message — Anthropic has no such role", () => {
     },
     [{ role: "system", content: "You are Ada.", tag: "system-block" }]
   );
-  const messages = out.messages as Array<{ role: string }>;
+  const messages = out.messages as Array<{
+    role: string;
+    content: Array<{ type: string; text?: string }>;
+  }>;
   assert.ok(
     messages.every((m) => m.role !== "system"),
     "no message may carry role:system"
+  );
+  // A hoisted role:system message must not ALSO survive as content inside a mapped
+  // message — that would duplicate the system content (once in `system`, once as a
+  // fake user turn in `messages`). Guards against a future removal of the
+  // `.filter((m) => m.role !== "system")` step in the message-mapping pipeline.
+  const allMessageText = messages.flatMap((m) => m.content.map((b) => b.text ?? "")).join(" ");
+  assert.ok(
+    !allMessageText.includes("inline system from the client"),
+    "hoisted system content must not also appear in messages"
   );
 });
 
@@ -57,6 +69,17 @@ test("a client-supplied role:system message is hoisted into the system param", (
     ],
   });
   assert.deepEqual(out.system, [{ type: "text", text: "inline system from the client" }]);
+
+  // Same duplication guard as above, exercised without the extra system-block input.
+  const messages = out.messages as Array<{
+    role: string;
+    content: Array<{ type: string; text?: string }>;
+  }>;
+  const allMessageText = messages.flatMap((m) => m.content.map((b) => b.text ?? "")).join(" ");
+  assert.ok(
+    !allMessageText.includes("inline system from the client"),
+    "hoisted system content must not also appear in messages"
+  );
 });
 
 test("supplies the per-model max_tokens", () => {
@@ -78,6 +101,19 @@ test("a client-supplied max_tokens is clamped to the model ceiling", () => {
     messages: [{ role: "user", content: "hi" }],
   });
   assert.equal(over.max_tokens, 64000, "exceeding the ceiling is a 400 — clamp instead");
+});
+
+test("a client-supplied max_tokens: NaN falls back to the model ceiling", () => {
+  const out = convert({
+    model: "claude-sonnet-4-6",
+    max_tokens: NaN,
+    messages: [{ role: "user", content: "hi" }],
+  });
+  assert.equal(
+    out.max_tokens,
+    64000,
+    "NaN must not propagate — it would serialize to null and 400 upstream"
+  );
 });
 
 test("passes model and stream through", () => {
