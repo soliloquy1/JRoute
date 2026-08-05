@@ -8,6 +8,8 @@ import { execute, cooldownMsFor } from "./executor.ts";
 import { keepaliveStream, sseHeaders } from "./sse.ts";
 import { resolveModel } from "./resolveModel.ts";
 import { getConverter } from "./convert/registry.ts";
+import { getResponseConverter, getStreamConverter } from "./convert/responseRegistry.ts";
+import { mapAnthropicErrorMessage } from "./convert/anthropic/errorMapping.ts";
 import type { ApiKeyRecord } from "../src/lib/db/types.ts";
 import type { TaggedBlock } from "./convert/types.ts";
 
@@ -136,23 +138,59 @@ export async function handleChat(
       clearCooldown(connection.id);
 
       if (result.stream) {
-        // Usage is unknown until the stream ends; Plan 2 adds token accounting
-        // from the final SSE frame.
-        logUsage({
-          apiKeyId: key.id,
-          providerId,
-          connectionId: connection.id,
-          model: requestedModel,
-          promptTokens: null,
-          outputTokens: null,
-          latencyMs: Date.now() - startedAt,
-          toolRounds: 0,
-          error: null,
+        const streamConverter = getStreamConverter(provider.wireFormat);
+        if (!streamConverter) {
+          // OpenAI path: unchanged from Plan 1 — already OpenAI-shaped, log immediately
+          // with null tokens. Accurate streaming usage for OpenAI is out of this plan's
+          // scope (see Global Constraints — Deliberate scope boundary).
+          logUsage({
+            apiKeyId: key.id,
+            providerId,
+            connectionId: connection.id,
+            model: requestedModel,
+            promptTokens: null,
+            outputTokens: null,
+            latencyMs: Date.now() - startedAt,
+            toolRounds: 0,
+            error: null,
+          });
+          return new Response(keepaliveStream(result.stream), {
+            status: 200,
+            headers: sseHeaders(),
+          });
+        }
+
+        // Anthropic path: usage is deferred to stream completion (design spec §9) — the
+        // row is written exactly once, when the stream actually ends, whether that is a
+        // natural finish, an upstream failure mid-stream, or the client hanging up after
+        // real tokens were already spent (the post-dial hangup rule).
+        const wrapped = streamConverter.wrap(result.stream, requestedModel, (completion) => {
+          const error =
+            completion.reason === "completed"
+              ? null
+              : completion.reason === "client-hangup"
+                ? "client disconnected mid-stream"
+                : "upstream connection closed unexpectedly";
+          logUsage({
+            apiKeyId: key.id,
+            providerId,
+            connectionId: connection.id,
+            model: requestedModel,
+            promptTokens: completion.promptTokens,
+            outputTokens: completion.outputTokens,
+            latencyMs: Date.now() - startedAt,
+            toolRounds: 0,
+            error,
+          });
         });
-        return new Response(keepaliveStream(result.stream), { status: 200, headers: sseHeaders() });
+        return new Response(keepaliveStream(wrapped), { status: 200, headers: sseHeaders() });
       }
 
-      const usage = (result.json as { usage?: UpstreamUsage } | null)?.usage;
+      const responseConverter = getResponseConverter(provider.wireFormat);
+      const outJson = responseConverter
+        ? responseConverter.convertResponse(result.json, requestedModel)
+        : result.json;
+      const usage = (outJson as { usage?: UpstreamUsage } | null)?.usage;
       logUsage({
         apiKeyId: key.id,
         providerId,
@@ -164,7 +202,7 @@ export async function handleChat(
         toolRounds: 0,
         error: null,
       });
-      return new Response(JSON.stringify(result.json), {
+      return new Response(JSON.stringify(outJson), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -187,11 +225,17 @@ export async function handleChat(
   // A real attempt's outcome always wins. The credential reason is the fallback only
   // when every candidate was skipped before a request was ever sent.
   const failureStatus = lastStatus ?? 502;
-  const failureMessage =
+  const rawFailureMessage =
     lastMessage ??
     (skippedDecryptFailed
       ? "Connection credential could not be decrypted"
       : "All connections failed");
+  // Anthropic-specific message refinement (e.g. billing_error vs. a generic 403) — a no-op
+  // for any message that isn't Anthropic's JSON error shape (§10's default: pass through).
+  const failureMessage =
+    provider.wireFormat === "anthropic"
+      ? mapAnthropicErrorMessage(rawFailureMessage)
+      : rawFailureMessage;
 
   logUsage({
     apiKeyId: key.id,
