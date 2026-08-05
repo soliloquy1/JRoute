@@ -51,7 +51,11 @@ test("sums input_tokens, cache_creation_input_tokens, and cache_read_input_token
     },
   };
   const out = convertResponse(cached, "claude-sonnet-4-6");
-  const usage = out.usage as { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+  const usage = out.usage as {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
   assert.equal(usage.prompt_tokens, 160, "10 + 100 + 50 — omitting cache fields undercounts");
   assert.equal(usage.completion_tokens, 5);
   assert.equal(usage.total_tokens, 165);
@@ -60,7 +64,11 @@ test("sums input_tokens, cache_creation_input_tokens, and cache_read_input_token
 test("a response with no usage field at all does not throw", () => {
   const noUsage: AnthropicResponseJson = { ...base, usage: undefined };
   const out = convertResponse(noUsage, "claude-sonnet-4-6");
-  const usage = out.usage as { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+  const usage = out.usage as {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
   assert.equal(usage.prompt_tokens, 0);
   assert.equal(usage.completion_tokens, 0);
 });
