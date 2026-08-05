@@ -214,3 +214,106 @@ test("message_start with no cache fields at all still works (uncached request)",
   const usageChunk = deltaResult.chunks[1] as { usage: { prompt_tokens: number } };
   assert.equal(usageChunk.usage.prompt_tokens, 25);
 });
+
+// ---------------------------------------------------------------------------
+// chunk-boundary hardening — three-way replay (Task 5)
+// ---------------------------------------------------------------------------
+
+/** Drives a full buffer through parseSseFrames + convertAnthropicEvent, feeding `rest`
+ * forward exactly as the real TransformStream (Task 6) will. Returns every emitted chunk
+ * across the whole sequence, in order. */
+function replay(chunks: string[]): Array<Record<string, unknown>> {
+  const state = createStreamState("claude-sonnet-4-6");
+  let buffer = "";
+  const out: Array<Record<string, unknown>> = [];
+  for (const piece of chunks) {
+    buffer += piece;
+    const { frames, rest } = parseSseFrames(buffer);
+    buffer = rest;
+    for (const frame of frames) {
+      const result = convertAnthropicEvent(frame.event, frame.data, state);
+      out.push(...result.chunks);
+    }
+  }
+  return out;
+}
+
+const FULL_SEQUENCE =
+  'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_01X","usage":{"input_tokens":10}}}\n\n' +
+  'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}\n\n' +
+  'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}\n\n' +
+  'event: message_stop\ndata: {"type":"message_stop"}\n\n';
+
+test("chunk-boundary replay: whole buffer as one piece", () => {
+  const out = replay([FULL_SEQUENCE]);
+  assert.equal(out.length, 4, "role chunk + content chunk + finish chunk + usage chunk");
+});
+
+test("chunk-boundary replay: split mid-frame produces identical output to the whole buffer", () => {
+  const cut = FULL_SEQUENCE.indexOf('"text_delta"') + 5; // lands inside the content_block_delta frame
+  const whole = replay([FULL_SEQUENCE]);
+  const split = replay([FULL_SEQUENCE.slice(0, cut), FULL_SEQUENCE.slice(cut)]);
+  assert.deepEqual(split, whole, "an arbitrary mid-frame split must not change the output");
+});
+
+test("chunk-boundary replay: one byte at a time produces identical output to the whole buffer", () => {
+  const whole = replay([FULL_SEQUENCE]);
+  const oneAtATime = replay(FULL_SEQUENCE.split(""));
+  assert.deepEqual(
+    oneAtATime,
+    whole,
+    "single-character-at-a-time delivery must not change the output"
+  );
+});
+
+test("chunk-boundary replay: split exactly on the \\n\\n delimiter (one chunk ends in \\n, next starts with \\n)", () => {
+  // This split point is adversarial: the blank-line delimiter is itself bisected, so the
+  // first chunk ends with "\n" and the second starts with "\n". A naive implementation that
+  // splits on "\n\n" within a single call might miss a frame whose terminator spans two
+  // consecutive chunks. The buffer-accumulation model (rest += next_chunk) must handle this
+  // correctly by construction: both "\n" halves end up in the same buffer call.
+  const firstFrameEnd = FULL_SEQUENCE.indexOf("\n\n"); // offset of the first blank-line separator
+  const delimiterMidpoint = firstFrameEnd + 1; // cut after the first '\n', before the second
+  const whole = replay([FULL_SEQUENCE]);
+  const split = replay([
+    FULL_SEQUENCE.slice(0, delimiterMidpoint),
+    FULL_SEQUENCE.slice(delimiterMidpoint),
+  ]);
+  assert.deepEqual(
+    split,
+    whole,
+    "a split that bisects the \\n\\n frame delimiter must not change the output"
+  );
+});
+
+test("chunk-boundary replay: a multi-byte UTF-8 character split across chunks decodes correctly", () => {
+  // A TextDecoder with { stream: true } — as the real Task 6 wrapper uses — buffers an
+  // incomplete UTF-8 sequence until the next chunk completes it. This test proves the
+  // buffering happens BEFORE parseSseFrames ever sees the text, by decoding bytes here the
+  // same way the real wrapper will, rather than asserting on parseSseFrames alone (which
+  // only ever sees valid text, by construction, once decoding is done correctly upstream).
+  const withEmoji =
+    'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"👍"}}\n\n';
+  const bytes = new TextEncoder().encode(withEmoji);
+  // 👍 is a 4-byte UTF-8 sequence (U+1F44D). Split the byte stream in the middle of it.
+  const emojiByteOffset = bytes.length - 8; // inside the JSON's escaped/raw emoji bytes
+  const decoder = new TextDecoder();
+  const state = createStreamState("claude-sonnet-4-6");
+  let buffer = "";
+  const out: Array<Record<string, unknown>> = [];
+  for (const part of [bytes.slice(0, emojiByteOffset), bytes.slice(emojiByteOffset)]) {
+    buffer += decoder.decode(part, { stream: true });
+    const { frames, rest } = parseSseFrames(buffer);
+    buffer = rest;
+    for (const frame of frames) {
+      const result = convertAnthropicEvent(frame.event, frame.data, state);
+      out.push(...result.chunks);
+    }
+  }
+  const choices = out[0].choices as Array<{ delta: { content: string } }>;
+  assert.equal(
+    choices[0].delta.content,
+    "👍",
+    "a byte-split multi-byte character must decode intact"
+  );
+});
