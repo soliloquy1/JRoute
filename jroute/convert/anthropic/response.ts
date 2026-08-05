@@ -16,18 +16,25 @@ export interface AnthropicResponseJson {
 }
 
 /**
- * Anthropic `stop_reason` -> OpenAI `finish_reason` (design spec §8.2).
+ * Anthropic `stop_reason` -> OpenAI `finish_reason` (design spec §8.2, full table).
  *
- * INTENTIONALLY INCOMPLETE in this task — only the three most common reasons are mapped;
- * everything else (including `refusal`) falls through to the `"stop"` default. Task 2
- * completes this table and adds the refusal-specific regression test. Do not treat this as
- * finished; it exists here only so `convertResponse` has something to call.
+ * `refusal` arrives as HTTP 200 with EMPTY content — it must map to `content_filter` here,
+ * not be treated as a failure; a refusal is a successful request whose model declined to
+ * answer, not a transport error. Anything unrecognized falls back to `"stop"` rather than
+ * throwing: an unmapped stop_reason should degrade gracefully.
  */
+const STOP_REASON_MAP: Record<string, string> = {
+  end_turn: "stop",
+  max_tokens: "length",
+  stop_sequence: "stop",
+  tool_use: "tool_calls", // unreachable until Plan 5 (no tool support yet)
+  pause_turn: "stop",
+  refusal: "content_filter",
+};
+
 export function mapStopReason(stopReason: string | null | undefined): string {
-  if (stopReason === "end_turn") return "stop";
-  if (stopReason === "max_tokens") return "length";
-  if (stopReason === "stop_sequence") return "stop";
-  return "stop";
+  if (!stopReason) return "stop";
+  return STOP_REASON_MAP[stopReason] ?? "stop";
 }
 
 /**

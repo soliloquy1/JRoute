@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { convertResponse } from "../../jroute/convert/anthropic/response.ts";
+import { convertResponse, mapStopReason } from "../../jroute/convert/anthropic/response.ts";
 import type { AnthropicResponseJson } from "../../jroute/convert/anthropic/response.ts";
 
 const base: AnthropicResponseJson = {
@@ -80,4 +80,39 @@ test("maps end_turn to stop and max_tokens to length", () => {
   const choicesMax = outMaxTokens.choices as Array<{ finish_reason: string }>;
   assert.equal(choicesEnd[0].finish_reason, "stop");
   assert.equal(choicesMax[0].finish_reason, "length");
+});
+
+test("maps refusal to content_filter, not an error", () => {
+  const refusal: AnthropicResponseJson = {
+    id: "msg_01REFUSE",
+    content: [],
+    stop_reason: "refusal",
+    usage: { input_tokens: 10, output_tokens: 0 },
+  };
+  const out = convertResponse(refusal, "claude-sonnet-4-6");
+  const choices = out.choices as Array<{
+    finish_reason: string;
+    message: { content: string };
+  }>;
+  assert.equal(choices[0].finish_reason, "content_filter");
+  assert.equal(
+    choices[0].message.content,
+    "",
+    "a refusal renders as an empty message, not a thrown error"
+  );
+});
+
+test("maps pause_turn and tool_use", () => {
+  assert.equal(mapStopReason("pause_turn"), "stop");
+  assert.equal(mapStopReason("tool_use"), "tool_calls");
+});
+
+test("an unrecognized stop_reason degrades to stop rather than throwing", () => {
+  assert.doesNotThrow(() => mapStopReason("some_future_reason_this_converter_has_never_seen"));
+  assert.equal(mapStopReason("some_future_reason_this_converter_has_never_seen"), "stop");
+});
+
+test("null stop_reason (still-streaming shape reused non-streaming) maps to stop", () => {
+  assert.equal(mapStopReason(null), "stop");
+  assert.equal(mapStopReason(undefined), "stop");
 });
