@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { anthropicConverter } from "../../jroute/convert/anthropic/request.ts";
+import { anthropicConverter, placeInjections } from "../../jroute/convert/anthropic/request.ts";
 import type { TaggedBlock } from "../../jroute/convert/types.ts";
 
 interface OutMessage {
@@ -200,7 +200,16 @@ test("deeper depth sorts before shallower even when registered later, same targe
 // `out[idx].content` throws. This test locks in the non-crashing behavior.
 // ---------------------------------------------------------------------------
 
-test("an all-assistant history with an over-deep injection does not crash", () => {
+// Task 8 note: through the FULL pipeline, an all-assistant history no longer reaches
+// placeInjections with any messages at all — Task 8's absorbLeadingAssistant step (§6.3
+// #4) runs first and, since every turn here is a leading assistant turn, the entire
+// history is absorbed into `system` before injection placement ever executes. That is
+// correct: with zero user turns anywhere, there is no valid message left to carry the
+// injection, so it is silently dropped rather than landing in `system` (a depth-injection
+// must never reach `system` — that invariant holds even here) or throwing. The clamp/
+// no-crash guarantee this test originally locked in still holds; it is now tested directly
+// against placeInjections() below, since the full pipeline can no longer exercise it.
+test("an all-assistant history with an over-deep injection is absorbed, not crashed", () => {
   const out = convert(
     [
       { role: "assistant", content: "a1" },
@@ -209,7 +218,28 @@ test("an all-assistant history with an over-deep injection does not crash", () =
     [inject(99)]
   );
   const messages = out.messages as OutMessage[];
-  const carrier = messages.findIndex((m) => texts(m).includes("LORE"));
+  assert.equal(messages.length, 0, "the entire all-assistant history is absorbed into system");
+  const system = JSON.stringify(out.system ?? []);
+  assert.ok(system.includes("a1") && system.includes("a2"), "the greeting content survives");
+  assert.ok(!system.includes("LORE"), "a depth-injection must never reach system, even here");
+});
+
+// This is the original Task 7 guard, re-pinned directly against placeInjections(): an
+// all-assistant array with no user turn anywhere and a depth exceeding the history length
+// must not throw (clamp fallback path), and the injection must land on the first
+// available message rather than being lost. Task 8's pipeline no longer reaches
+// placeInjections in this exact shape (see the test above), but the function itself must
+// still behave safely if ever called with this input — e.g. from a future caller, or
+// mid-conversation content that resolves to all-assistant after other normalization.
+test("placeInjections itself does not crash on an all-assistant array with an over-deep injection", () => {
+  const messages = [
+    { role: "assistant", content: [{ type: "text" as const, text: "a1" }] },
+    { role: "assistant", content: [{ type: "text" as const, text: "a2" }] },
+  ];
+  const out = placeInjections(messages, [
+    { role: "system", content: "LORE", tag: "depth-injection", depth: 99 },
+  ]);
+  const carrier = out.findIndex((m) => texts(m).includes("LORE"));
   assert.ok(carrier >= 0, "the injection must land somewhere, not throw or vanish");
 });
 

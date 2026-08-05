@@ -168,6 +168,56 @@ export function placeInjections(
   return out;
 }
 
+/**
+ * Product spec §6.3 #4. Anthropic requires the conversation to begin with a user turn,
+ * and after system hoisting `messages[0]` is the character's greeting — which is how
+ * EVERY Janitor chat opens. This therefore fires on essentially all real traffic.
+ *
+ * The greeting is character content, not noise, so it is absorbed into the system blocks
+ * rather than discarded: dropping it silently would change the character's established
+ * voice. Returns the absorbed text so the caller can append it to `system`.
+ */
+function absorbLeadingAssistant(messages: AnthropicMessage[]): {
+  messages: AnthropicMessage[];
+  absorbed: string[];
+} {
+  const absorbed: string[] = [];
+  let i = 0;
+  while (i < messages.length && messages[i].role === "assistant") {
+    const text = messages[i].content
+      .filter((b): b is { type: "text"; text: string } => b.type === "text")
+      .map((b) => b.text)
+      .join("\n");
+    if (text.length > 0) absorbed.push(text);
+    i += 1;
+  }
+  return { messages: messages.slice(i), absorbed };
+}
+
+/**
+ * Product spec §6.3 #7, CORRECTED (design spec §12.1).
+ *
+ * The product spec says a trailing assistant turn "must survive conversion". That is no
+ * longer true: Claude 4.6+ returns 400 invalid_request_error — "This model does not
+ * support assistant message prefill. The conversation must end with a user message." —
+ * and claude-sonnet-4-6 is this plan's reference model. Preserving the prefill would ship
+ * a guaranteed 400 on every request that carries one.
+ *
+ * Trailing assistant content is dropped. It is not absorbed into `system`: a prefill is an
+ * instruction about how to START the reply, and relocating it to the system prompt changes
+ * its meaning rather than preserving it.
+ */
+function dropTrailingAssistant(messages: AnthropicMessage[]): AnthropicMessage[] {
+  let end = messages.length;
+  while (end > 0 && messages[end - 1].role === "assistant") end -= 1;
+  return messages.slice(0, end);
+}
+
+/** Product spec §6.3 #6: Anthropic 400s on empty content — drop the message entirely. */
+function stripEmpty(messages: AnthropicMessage[]): AnthropicMessage[] {
+  return messages.filter((m) => m.content.length > 0);
+}
+
 function hoistedSystem(
   systemBlocks: TaggedBlock[],
   messages: OpenAIMessage[]
@@ -196,16 +246,33 @@ export const anthropicConverter: RequestConverter = {
     const { systemBlocks, injections } = partitionBlocks(blocks);
     const incoming = (body.messages as OpenAIMessage[]) ?? [];
 
+    // 1. Hoist system content (tagged blocks + any client role:system message).
     const system = hoistedSystem(systemBlocks, incoming);
 
-    const mapped = incoming
+    // Map to Anthropic shape, dropping the system messages already hoisted in step 1.
+    let messages: AnthropicMessage[] = incoming
       .filter((m) => m.role !== "system")
       .map((m) => ({
         role: m.role === "assistant" ? "assistant" : "user",
         content: toContentBlocks(m.content),
       }));
 
-    const messages = placeInjections(mapped, injections);
+    // 2. Leading assistant greeting -> absorbed into system (§6.3 #4).
+    const led = absorbLeadingAssistant(messages);
+    messages = led.messages;
+    for (const text of led.absorbed) system.push({ type: "text", text });
+
+    // 3. Depth-injections into message content (§6.5, §6.3 #8/#9). Runs AFTER the
+    //    leading-assistant drop so depths are measured against the real conversation.
+    messages = placeInjections(messages, injections);
+
+    // 4. Strip empty content (§6.3 #6).
+    messages = stripEmpty(messages);
+
+    // 5. Trailing assistant prefill -> dropped (§6.3 #7, corrected — 400 on Claude 4.6+).
+    //    Runs after placement so an injection targeting the final turn is not stranded on
+    //    a message that is about to be removed.
+    messages = dropTrailingAssistant(messages);
 
     // Anthropic REQUIRES max_tokens; OpenAI treats it as optional and Janitor never sends
     // it. Honour a smaller client value, clamp anything above the model ceiling — going
