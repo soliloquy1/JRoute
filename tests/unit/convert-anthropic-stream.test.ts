@@ -317,3 +317,119 @@ test("chunk-boundary replay: a multi-byte UTF-8 character split across chunks de
     "a byte-split multi-byte character must decode intact"
   );
 });
+
+// ---------------------------------------------------------------------------
+// errorEventBytes (Task 6)
+// ---------------------------------------------------------------------------
+import { errorEventBytes } from "../../jroute/sse.ts";
+
+test("errorEventBytes encodes two SSE frames as bytes", () => {
+  const bytes = errorEventBytes("boom");
+  const text = new TextDecoder().decode(bytes);
+  assert.ok(text.includes('"message":"boom"'));
+  assert.ok(text.includes("data: [DONE]"));
+});
+
+test("errorEventBytes accepts a custom error type", () => {
+  const bytes = errorEventBytes("boom", "billing_error");
+  const text = new TextDecoder().decode(bytes);
+  assert.ok(text.includes('"type":"billing_error"'));
+});
+
+// ---------------------------------------------------------------------------
+// createAnthropicStreamTransform (Task 6)
+// ---------------------------------------------------------------------------
+import { createAnthropicStreamTransform } from "../../jroute/convert/anthropic/stream.ts";
+
+/** Pipes a byte-producing source through the transform and collects the decoded output. */
+async function runTransform(
+  sourceChunks: Uint8Array[],
+  options: { model: string; onComplete: (r: unknown) => void }
+): Promise<string> {
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const c of sourceChunks) controller.enqueue(c);
+      controller.close();
+    },
+  });
+  const transformed = source.pipeThrough(createAnthropicStreamTransform(options));
+  const reader = transformed.getReader();
+  const decoder = new TextDecoder();
+  let out = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    out += decoder.decode(value, { stream: true });
+  }
+  return out;
+}
+
+test("the wrapper emits OpenAI SSE frames and terminates with [DONE] on message_stop", async () => {
+  const encoder = new TextEncoder();
+  const sequence =
+    'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_01Y","usage":{"input_tokens":5}}}\n\n' +
+    'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}\n\n' +
+    'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}\n\n' +
+    'event: message_stop\ndata: {"type":"message_stop"}\n\n';
+  let completed: unknown = null;
+  const out = await runTransform([encoder.encode(sequence)], {
+    model: "claude-sonnet-4-6",
+    onComplete: (r) => {
+      completed = r;
+    },
+  });
+  assert.ok(out.includes('"role":"assistant"'));
+  assert.ok(out.includes('"content":"Hi"'));
+  assert.ok(out.includes("data: [DONE]"));
+  assert.deepEqual(completed, { promptTokens: 5, outputTokens: 1, reason: "completed" });
+});
+
+test("an event: error mid-stream produces a SANITIZED errorEventBytes frame, not a throw", async () => {
+  const encoder = new TextEncoder();
+  const sequence =
+    'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_01Z","usage":{"input_tokens":5}}}\n\n' +
+    'event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"sk-live-abcdefghijklmnopqrstuvwx leaked in upstream text"}}\n\n';
+  let completed: unknown = null;
+  const out = await runTransform([encoder.encode(sequence)], {
+    model: "claude-sonnet-4-6",
+    onComplete: (r) => {
+      completed = r;
+    },
+  });
+  assert.ok(
+    !out.includes("sk-live-abcdefghijklmnopqrstuvwx"),
+    "an upstream error message must be sanitized before hitting the wire"
+  );
+  assert.ok(out.includes("[redacted]"));
+  assert.ok(out.includes("data: [DONE]"));
+  assert.deepEqual(completed, { promptTokens: 5, outputTokens: null, reason: "upstream-closed" });
+});
+
+test("the transform never throws even on a completely malformed byte sequence", async () => {
+  const encoder = new TextEncoder();
+  await assert.doesNotReject(
+    runTransform([encoder.encode("this is not SSE at all, just garbage\n\nmore garbage\n\n")], {
+      model: "claude-sonnet-4-6",
+      onComplete: () => {},
+    })
+  );
+});
+
+test("a source that closes without message_stop reports upstream-closed via flush", async () => {
+  const encoder = new TextEncoder();
+  const sequence =
+    'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_01W","usage":{"input_tokens":3}}}\n\n';
+  let completed: unknown = null;
+  const out = await runTransform([encoder.encode(sequence)], {
+    model: "claude-sonnet-4-6",
+    onComplete: (r) => {
+      completed = r;
+    },
+  });
+  assert.ok(out.includes("Upstream connection closed unexpectedly"));
+  assert.deepEqual(completed, {
+    promptTokens: null,
+    outputTokens: null,
+    reason: "upstream-closed",
+  });
+});
