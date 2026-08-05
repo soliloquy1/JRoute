@@ -4,20 +4,37 @@ import assert from "node:assert/strict";
 import { mapAnthropicErrorMessage } from "../../jroute/convert/anthropic/errorMapping.ts";
 
 test("a billing_error gets a distinct, operator-actionable message", () => {
-  const raw =
-    '{"type":"error","error":{"type":"billing_error","message":"Your organization has insufficient credit balance."}}';
+  // Raw message is deliberately neutral (no "billing"/"credit" words) so the assertion
+  // can ONLY pass because mapAnthropicErrorMessage added the billing prefix, not because
+  // the upstream text happened to contain the word.
+  const raw = '{"type":"error","error":{"type":"billing_error","message":"Forbidden."}}';
   const out = mapAnthropicErrorMessage(raw);
-  assert.ok(out.toLowerCase().includes("billing") || out.toLowerCase().includes("credit"));
+  assert.ok(
+    out.toLowerCase().includes("billing"),
+    "billing_error must be labeled as a billing problem"
+  );
+  assert.notEqual(
+    out,
+    "Forbidden.",
+    "must not pass the bare message through — the billing distinction is the point"
+  );
 });
 
 test("a permission_error is left distinguishable from a billing_error", () => {
+  // IDENTICAL raw message on both; the ONLY thing that can make them differ is the
+  // billing-prefix branch. If that branch is removed, both return "Forbidden." and this
+  // fails.
   const billing = mapAnthropicErrorMessage(
-    '{"type":"error","error":{"type":"billing_error","message":"insufficient credit"}}'
+    '{"type":"error","error":{"type":"billing_error","message":"Forbidden."}}'
   );
   const permission = mapAnthropicErrorMessage(
-    '{"type":"error","error":{"type":"permission_error","message":"forbidden"}}'
+    '{"type":"error","error":{"type":"permission_error","message":"Forbidden."}}'
   );
-  assert.notEqual(billing, permission);
+  assert.notEqual(
+    billing,
+    permission,
+    "billing_error and permission_error must not collapse to the same message"
+  );
 });
 
 test("an unrecognized error type passes the message through unchanged", () => {
