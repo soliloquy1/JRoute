@@ -1,6 +1,9 @@
 import { convertResponse as anthropicConvertResponse } from "./anthropic/response.ts";
 import { createAnthropicStreamTransform } from "./anthropic/stream.ts";
+import { convertResponse as geminiConvertResponse } from "./gemini/response.ts";
+import { createGeminiStreamTransform } from "./gemini/stream.ts";
 import type { AnthropicResponseJson } from "./anthropic/response.ts";
+import type { GeminiResponseJson } from "./gemini/response.ts";
 import type { AnthropicStreamCompletion } from "./anthropic/stream.ts";
 import type { WireFormat } from "../../src/lib/db/types.ts";
 
@@ -27,12 +30,19 @@ const RESPONSE_CONVERTERS: Partial<Record<WireFormat, ResponseConverter>> = {
     convertResponse: (json, model) =>
       anthropicConvertResponse(json as AnthropicResponseJson, model),
   },
+  gemini: {
+    convertResponse: (json, model) => geminiConvertResponse(json as GeminiResponseJson, model),
+  },
 };
 
 const STREAM_CONVERTERS: Partial<Record<WireFormat, StreamConverter>> = {
   anthropic: {
     wrap: (inner, model, onComplete) =>
       inner.pipeThrough(createAnthropicStreamTransform({ model, onComplete })),
+  },
+  gemini: {
+    wrap: (inner, model, onComplete) =>
+      inner.pipeThrough(createGeminiStreamTransform({ model, onComplete })),
   },
 };
 

@@ -559,42 +559,11 @@ test("usage rows record the requested model id", async () => {
   assert.equal(row.provider_id, "anthropic", "and the provider that served it");
 });
 
-test("a gemini-wireFormat provider threads the model into the URL and passes the raw body through", async () => {
-  const db = getDb();
-  db.prepare("DELETE FROM connections").run();
-  db.prepare("DELETE FROM providers").run();
-  upsertProvider({
-    id: "anthropic",
-    name: "Anthropic",
-    kind: "apikey",
-    baseUrl: "https://generativelanguage.googleapis.com",
-    // A provider that speaks Gemini wire format, driven by a model that resolves to it.
-    wireFormat: "gemini",
-    enabled: true,
-  });
-  createConnection("anthropic", "primary", "sk-ant-1");
-
-  let seenUrl = "";
-  const res = await handleChat(
-    post({ model: "claude-sonnet-4-6", messages: [{ role: "user", content: "hi" }] }),
-    key(),
-    {
-      fetchImpl: async (input) => {
-        seenUrl = String(input);
-        return new Response("{}", { status: 200 });
-      },
-    }
-  );
-  // The gemini executor descriptor (Task 6) resolves the model-scoped URL. The response is
-  // the raw upstream body passed through — the response converter does not arrive until Task 7.
-  assert.equal(
-    seenUrl,
-    "https://generativelanguage.googleapis.com/v1beta/models/claude-sonnet-4-6:generateContent"
-  );
-  assert.equal(res.status, 200);
-  const body = await res.json();
-  assert.deepEqual(body, {});
-});
+// (Removed Task-6 repurposed test "a gemini-wireFormat provider threads the model into the URL
+// and passes the raw body through": its raw-passthrough assertion became false when Task 7
+// registered the gemini response converter, and its URL-threading value is already covered by
+// executor.test.ts's buildPath/execute cases. The fully-wired end-to-end gemini path is pinned
+// by the three tests below.)
 
 test("converts a non-streaming Anthropic response into OpenAI chat.completion shape", async () => {
   upsertProvider({
@@ -848,4 +817,142 @@ test("an OpenAI upstream 403 whose body looks like Anthropic billing_error JSON 
     !body.error.message.toLowerCase().includes("billing issue with the upstream anthropic"),
     "OpenAI upstream error must not be remapped through Anthropic error mapper"
   );
+});
+
+test("converts a non-streaming Gemini response into OpenAI chat.completion shape", async () => {
+  upsertProvider({
+    id: "google",
+    name: "Google",
+    kind: "apikey",
+    baseUrl: "https://generativelanguage.googleapis.com",
+    wireFormat: "gemini",
+    enabled: true,
+  });
+  createConnection("google", "primary", "gk-1");
+  const fetchImpl: typeof fetch = async () =>
+    new Response(
+      JSON.stringify({
+        candidates: [
+          {
+            content: { role: "model", parts: [{ text: "Hello from Gemini" }] },
+            finishReason: "STOP",
+            index: 0,
+          },
+        ],
+        usageMetadata: { promptTokenCount: 20, candidatesTokenCount: 8, totalTokenCount: 28 },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+  const apiKey = key();
+  const res = await handleChat(
+    post({ model: "gemini-2.0-flash", messages: [{ role: "user", content: "hi" }] }),
+    apiKey,
+    { fetchImpl }
+  );
+  assert.equal(res.status, 200);
+  const body = (await res.json()) as {
+    object: string;
+    choices: Array<{ message: { content: string } }>;
+  };
+  assert.equal(body.object, "chat.completion");
+  assert.equal(body.choices[0].message.content, "Hello from Gemini");
+  const row = getDb().prepare("SELECT * FROM usage_logs WHERE api_key_id = ?").get(apiKey.id) as {
+    prompt_tokens: number;
+    output_tokens: number;
+  };
+  assert.equal(row.prompt_tokens, 20);
+  assert.equal(row.output_tokens, 8);
+});
+
+test("streams a converted Gemini response and defers usage logging to stream completion", async () => {
+  upsertProvider({
+    id: "google",
+    name: "Google",
+    kind: "apikey",
+    baseUrl: "https://generativelanguage.googleapis.com",
+    wireFormat: "gemini",
+    enabled: true,
+  });
+  createConnection("google", "primary", "gk-1");
+  const encoder = new TextEncoder();
+  const wire =
+    'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"hi"}]}}]}\n\n' +
+    'data: {"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":9,"candidatesTokenCount":2,"totalTokenCount":11}}\n\n';
+  const fetchImpl: typeof fetch = async () =>
+    new Response(
+      new ReadableStream({
+        start: (c) => {
+          c.enqueue(encoder.encode(wire));
+          c.close();
+        },
+      }),
+      { status: 200, headers: { "content-type": "text/event-stream" } }
+    );
+  const apiKey = key();
+  const res = await handleChat(
+    post({ model: "gemini-2.0-flash", stream: true, messages: [{ role: "user", content: "hi" }] }),
+    apiKey,
+    { fetchImpl }
+  );
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("content-type"), "text/event-stream");
+
+  const beforeDrain = getDb()
+    .prepare("SELECT * FROM usage_logs WHERE api_key_id = ?")
+    .get(apiKey.id);
+  assert.equal(beforeDrain, undefined, "usage row must not exist before the stream is consumed");
+
+  const text = await res.text();
+  assert.match(text, /"role":"assistant"/);
+  assert.match(text, /data: \[DONE\]/);
+
+  const row = getDb().prepare("SELECT * FROM usage_logs WHERE api_key_id = ?").get(apiKey.id) as {
+    prompt_tokens: number;
+    output_tokens: number;
+    error: string | null;
+  };
+  assert.equal(row.prompt_tokens, 9);
+  assert.equal(row.output_tokens, 2);
+  assert.equal(row.error, null);
+});
+
+test("a post-dial hangup on a Gemini stream writes a row with partial tokens and a distinct error", async () => {
+  upsertProvider({
+    id: "google",
+    name: "Google",
+    kind: "apikey",
+    baseUrl: "https://generativelanguage.googleapis.com",
+    wireFormat: "gemini",
+    enabled: true,
+  });
+  createConnection("google", "primary", "gk-1");
+  const encoder = new TextEncoder();
+  // A content frame carrying usageMetadata but no finishReason; source never closes.
+  const wire =
+    'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"partial"}]}}],"usageMetadata":{"promptTokenCount":6}}\n\n';
+  const fetchImpl: typeof fetch = async () =>
+    new Response(
+      new ReadableStream({
+        start: (c) => {
+          c.enqueue(encoder.encode(wire));
+        },
+      }),
+      { status: 200, headers: { "content-type": "text/event-stream" } }
+    );
+  const apiKey = key();
+  const res = await handleChat(
+    post({ model: "gemini-2.0-flash", stream: true, messages: [{ role: "user", content: "hi" }] }),
+    apiKey,
+    { fetchImpl }
+  );
+  assert.ok(res.body, "must forward a live stream to cancel");
+  const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+  await reader.read();
+  await reader.cancel("client went away");
+  const row = getDb().prepare("SELECT * FROM usage_logs WHERE api_key_id = ?").get(apiKey.id) as {
+    prompt_tokens: number;
+    error: string;
+  };
+  assert.equal(row.prompt_tokens, 6);
+  assert.equal(row.error, "client disconnected mid-stream");
 });

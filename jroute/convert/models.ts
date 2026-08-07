@@ -20,6 +20,7 @@ export const MODEL_MAP: Record<string, ModelEntry> = {
   "claude-haiku-4-5": { providerId: "anthropic", maxTokens: 32000 },
   "gpt-4o": { providerId: "openai", maxTokens: 16384 },
   "gpt-4o-mini": { providerId: "openai", maxTokens: 16384 },
+  "gemini-2.0-flash": { providerId: "google", maxTokens: 8192 },
 };
 
 export function lookupModel(model: string): ModelEntry | null {
