@@ -559,7 +559,7 @@ test("usage rows record the requested model id", async () => {
   assert.equal(row.provider_id, "anthropic", "and the provider that served it");
 });
 
-test("a provider whose wireFormat has no converter is a clean 503", async () => {
+test("a provider whose wireFormat has no executor descriptor is a clean 502", async () => {
   const db = getDb();
   db.prepare("DELETE FROM connections").run();
   db.prepare("DELETE FROM providers").run();
@@ -568,7 +568,9 @@ test("a provider whose wireFormat has no converter is a clean 503", async () => 
     name: "Anthropic",
     kind: "apikey",
     baseUrl: "https://api.anthropic.com",
-    // Force an unsupported format through the same provider the model maps to.
+    // gemini now HAS a request converter (Task 1) but its executor descriptor does not
+    // arrive until Task 6 — until then a gemini-wireFormat provider fails cleanly at the
+    // descriptor lookup, never a crash and never a leaked stack trace.
     wireFormat: "gemini",
     enabled: true,
   });
@@ -579,9 +581,10 @@ test("a provider whose wireFormat has no converter is a clean 503", async () => 
     key(),
     { fetchImpl: async () => new Response("{}", { status: 200 }) }
   );
-  assert.equal(res.status, 503);
+  assert.equal(res.status, 502);
   const body = (await res.json()) as { error: { message: string } };
-  assert.ok(body.error.message.length > 0);
+  assert.match(body.error.message, /Unsupported wire format: gemini/);
+  assert.ok(!body.error.message.includes("at /"), "must not leak a stack trace");
 });
 
 test("converts a non-streaming Anthropic response into OpenAI chat.completion shape", async () => {

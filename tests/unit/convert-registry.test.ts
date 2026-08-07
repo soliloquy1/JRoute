@@ -2,14 +2,15 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { getConverter } from "../../jroute/convert/registry.ts";
 import { openaiConverter } from "../../jroute/convert/openai.ts";
+import { geminiConverter } from "../../jroute/convert/gemini/request.ts";
 import type { TaggedBlock } from "../../jroute/convert/types.ts";
 
 test("registry returns the openai converter for wireFormat openai", () => {
   assert.equal(getConverter("openai"), openaiConverter);
 });
 
-test("registry returns null for a wireFormat with no converter yet", () => {
-  assert.equal(getConverter("gemini"), null);
+test("registry returns the gemini converter for wireFormat gemini", () => {
+  assert.equal(getConverter("gemini"), geminiConverter);
 });
 
 test("openai converter passes the body through unchanged", () => {
