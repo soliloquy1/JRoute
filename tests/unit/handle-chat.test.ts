@@ -559,7 +559,7 @@ test("usage rows record the requested model id", async () => {
   assert.equal(row.provider_id, "anthropic", "and the provider that served it");
 });
 
-test("a provider whose wireFormat has no executor descriptor is a clean 502", async () => {
+test("a gemini-wireFormat provider threads the model into the URL and passes the raw body through", async () => {
   const db = getDb();
   db.prepare("DELETE FROM connections").run();
   db.prepare("DELETE FROM providers").run();
@@ -567,24 +567,33 @@ test("a provider whose wireFormat has no executor descriptor is a clean 502", as
     id: "anthropic",
     name: "Anthropic",
     kind: "apikey",
-    baseUrl: "https://api.anthropic.com",
-    // gemini now HAS a request converter (Task 1) but its executor descriptor does not
-    // arrive until Task 6 — until then a gemini-wireFormat provider fails cleanly at the
-    // descriptor lookup, never a crash and never a leaked stack trace.
+    baseUrl: "https://generativelanguage.googleapis.com",
+    // A provider that speaks Gemini wire format, driven by a model that resolves to it.
     wireFormat: "gemini",
     enabled: true,
   });
   createConnection("anthropic", "primary", "sk-ant-1");
 
+  let seenUrl = "";
   const res = await handleChat(
     post({ model: "claude-sonnet-4-6", messages: [{ role: "user", content: "hi" }] }),
     key(),
-    { fetchImpl: async () => new Response("{}", { status: 200 }) }
+    {
+      fetchImpl: async (input) => {
+        seenUrl = String(input);
+        return new Response("{}", { status: 200 });
+      },
+    }
   );
-  assert.equal(res.status, 502);
-  const body = (await res.json()) as { error: { message: string } };
-  assert.match(body.error.message, /Unsupported wire format: gemini/);
-  assert.ok(!body.error.message.includes("at /"), "must not leak a stack trace");
+  // The gemini executor descriptor (Task 6) resolves the model-scoped URL. The response is
+  // the raw upstream body passed through — the response converter does not arrive until Task 7.
+  assert.equal(
+    seenUrl,
+    "https://generativelanguage.googleapis.com/v1beta/models/claude-sonnet-4-6:generateContent"
+  );
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.deepEqual(body, {});
 });
 
 test("converts a non-streaming Anthropic response into OpenAI chat.completion shape", async () => {
