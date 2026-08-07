@@ -121,3 +121,100 @@ test("a string stop maps to a single-element stopSequences array", () => {
   );
   assert.deepEqual((out.generationConfig as { stopSequences: string[] }).stopSequences, ["STOP"]);
 });
+
+import { placeGeminiInjections, absorbLeadingModel } from "../../jroute/convert/gemini/request.ts";
+
+test("depth-injection lands at depth N from the end, in the user turn's parts", () => {
+  const contents = [
+    { role: "user" as const, parts: [{ text: "u0" }] },
+    { role: "model" as const, parts: [{ text: "m1" }] },
+    { role: "user" as const, parts: [{ text: "u2" }] },
+  ];
+  const out = placeGeminiInjections(contents, [
+    { role: "system", content: "LORE", tag: "depth-injection", depth: 2 },
+  ]);
+  // depth 2 from the end = index 0 (the u0 user turn). Injected into its parts, appended.
+  assert.deepEqual(out[0].parts, [{ text: "u0" }, { text: "LORE" }]);
+  // Other turns untouched; caller array not mutated.
+  assert.deepEqual(contents[0].parts, [{ text: "u0" }], "input must not be mutated");
+});
+
+test("an injection targeting a model turn redirects to the nearest preceding user turn", () => {
+  const contents = [
+    { role: "user" as const, parts: [{ text: "u0" }] },
+    { role: "model" as const, parts: [{ text: "m1" }] },
+    { role: "user" as const, parts: [{ text: "u2" }] },
+  ];
+  // depth 1 from the end = index 1 (the model turn). Must redirect to index 0 (user), not sit on model.
+  const out = placeGeminiInjections(contents, [
+    { role: "system", content: "LORE", tag: "depth-injection", depth: 1 },
+  ]);
+  assert.deepEqual(out[1].parts, [{ text: "m1" }], "must NOT land in the model turn");
+  assert.deepEqual(out[0].parts, [{ text: "u0" }, { text: "LORE" }]);
+});
+
+test("multiple injections order deeper-first, then registration order", () => {
+  const contents = [
+    { role: "user" as const, parts: [{ text: "u0" }] },
+    { role: "model" as const, parts: [{ text: "m1" }] },
+  ];
+  const out = placeGeminiInjections(contents, [
+    { role: "system", content: "A", tag: "depth-injection", depth: 0 },
+    { role: "system", content: "B", tag: "depth-injection", depth: 1 },
+  ]);
+  // Both land in turn 0: B (depth 1) targets it directly; A (depth 0) targets the model turn
+  // and redirects back to it. Two injections that land in DIFFERENT turns cannot distinguish
+  // deeper-first from registration order (each gets its own slot), so this test forces both
+  // into one turn: deeper-first means B is appended before A -> [u0, B, A], while plain
+  // registration order would append A first -> [u0, A, B]. That difference is the guard.
+  assert.deepEqual(out[0].parts, [{ text: "u0" }, { text: "B" }, { text: "A" }]);
+  assert.deepEqual(out[1].parts, [{ text: "m1" }], "model turn untouched");
+});
+
+test("depth exceeding history clamps to the top user turn", () => {
+  const contents = [{ role: "user" as const, parts: [{ text: "u0" }] }];
+  const out = placeGeminiInjections(contents, [
+    { role: "system", content: "LORE", tag: "depth-injection", depth: 99 },
+  ]);
+  assert.deepEqual(out[0].parts, [{ text: "u0" }, { text: "LORE" }]);
+});
+
+test("a leading model greeting is absorbed into systemInstruction (end-to-end)", () => {
+  const out = geminiConverter.convertRequest(
+    params({
+      blocks: [{ role: "system", content: "You are Aria.", tag: "system-block" }],
+      body: {
+        messages: [
+          { role: "assistant", content: "Hello, traveler." }, // the greeting
+          { role: "user", content: "hi" },
+        ],
+      },
+    })
+  );
+  const si = out.systemInstruction as { parts: Array<{ text: string }> };
+  assert.deepEqual(si.parts, [{ text: "You are Aria." }, { text: "Hello, traveler." }]);
+  assert.deepEqual(out.contents, [{ role: "user", parts: [{ text: "hi" }] }]);
+});
+
+test("absorbLeadingModel returns the absorbed text and the trimmed contents", () => {
+  const { contents, absorbed } = absorbLeadingModel([
+    { role: "model", parts: [{ text: "greeting" }] },
+    { role: "user", parts: [{ text: "hi" }] },
+  ]);
+  assert.deepEqual(absorbed, ["greeting"]);
+  assert.deepEqual(contents, [{ role: "user", parts: [{ text: "hi" }] }]);
+});
+
+test("empty-content messages are stripped end-to-end", () => {
+  const out = geminiConverter.convertRequest(
+    params({
+      body: {
+        messages: [
+          { role: "user", content: "" }, // empty -> stripped
+          { role: "user", content: "real" },
+        ],
+      },
+    })
+  );
+  assert.deepEqual(out.contents, [{ role: "user", parts: [{ text: "real" }] }]);
+});
