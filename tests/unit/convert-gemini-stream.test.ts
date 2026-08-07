@@ -129,3 +129,130 @@ test("Gemini SSE frames survive the shared parseSseFrames framing", () => {
   const r1 = convertGeminiChunk(frames[1].data, state);
   assert.equal(r1.terminate, true);
 });
+
+import { createGeminiStreamTransform } from "../../jroute/convert/gemini/stream.ts";
+
+/** Pipes byte chunks through the transform, collects decoded output. */
+async function runTransform(
+  sourceChunks: Uint8Array[],
+  options: { model: string; onComplete: (r: unknown) => void }
+): Promise<string> {
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const c of sourceChunks) controller.enqueue(c);
+      controller.close();
+    },
+  });
+  const transformed = source.pipeThrough(createGeminiStreamTransform(options));
+  const reader = transformed.getReader();
+  const decoder = new TextDecoder();
+  let out = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    out += decoder.decode(value, { stream: true });
+  }
+  return out;
+}
+
+test("the wrapper emits OpenAI frames and a synthesized [DONE] on the finishReason frame", async () => {
+  const encoder = new TextEncoder();
+  const wire =
+    'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"Hi"}]}}]}\n\n' +
+    'data: {"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":1}}\n\n';
+  let completed: unknown = null;
+  const out = await runTransform([encoder.encode(wire)], {
+    model: "gemini-2.0-flash",
+    onComplete: (r) => {
+      completed = r;
+    },
+  });
+  assert.ok(out.includes('"role":"assistant"'));
+  assert.ok(out.includes('"content":"Hi"'));
+  assert.ok(out.includes("data: [DONE]"), "we synthesize [DONE]; Gemini never sends one");
+  assert.deepEqual(completed, { promptTokens: 5, outputTokens: 1, reason: "completed" });
+});
+
+test("a malformed frame produces a SANITIZED error frame, not a throw", async () => {
+  const encoder = new TextEncoder();
+  const wire =
+    'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]}}]}\n\n' +
+    "data: sk-live-abcdefghijklmnopqrstuvwx not json\n\n";
+  let completed: unknown = null;
+  const out = await runTransform([encoder.encode(wire)], {
+    model: "gemini-2.0-flash",
+    onComplete: (r) => {
+      completed = r;
+    },
+  });
+  assert.ok(
+    !out.includes("sk-live-abcdefghijklmnopqrstuvwx"),
+    "upstream text must be sanitized before the wire"
+  );
+  // `errorEventBytes` itself emits BOTH the error frame AND a trailing `data: [DONE]\n\n`
+  // (see jroute/sse.ts) — so the error path terminates the SSE stream with [DONE] without the
+  // wrapper enqueuing it separately. This assertion confirms that termination, not the
+  // natural-completion path.
+  assert.ok(out.includes("data: [DONE]"));
+  assert.equal((completed as { reason: string }).reason, "upstream-closed");
+});
+
+test("the transform never throws on completely malformed bytes", async () => {
+  const encoder = new TextEncoder();
+  await assert.doesNotReject(
+    runTransform([encoder.encode("garbage with no data prefix\n\nmore garbage\n\n")], {
+      model: "gemini-2.0-flash",
+      onComplete: () => {},
+    })
+  );
+});
+
+test("a source that closes without a finishReason reports upstream-closed via flush", async () => {
+  const encoder = new TextEncoder();
+  // A content frame with REAL usage tokens but no terminal finishReason frame — the connection
+  // dropped mid-stream. The truncation must still report NULL tokens: an upstream that dropped
+  // before finishReason produced no CONFIRMED usage report, so reporting the partial state
+  // would mislead the operator. The non-null token state is what makes this distinguishable
+  // from a flush that (wrongly) echoes `state` back.
+  const wire =
+    'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"partial"}]}}],"usageMetadata":{"promptTokenCount":5}}\n\n';
+  let completed: unknown = null;
+  const out = await runTransform([encoder.encode(wire)], {
+    model: "gemini-2.0-flash",
+    onComplete: (r) => {
+      completed = r;
+    },
+  });
+  assert.ok(out.includes("Upstream connection closed unexpectedly"));
+  assert.deepEqual(completed, {
+    promptTokens: null,
+    outputTokens: null,
+    reason: "upstream-closed",
+  });
+});
+
+test("cancelling mid-stream reports client-hangup with partial tokens", async () => {
+  const encoder = new TextEncoder();
+  // A content frame that also carried usageMetadata but no finishReason yet.
+  const wire =
+    'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"partial"}]}}],"usageMetadata":{"promptTokenCount":8}}\n\n';
+  let completed: unknown = null;
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(wire));
+      // never closes
+    },
+  });
+  const transformed = source.pipeThrough(
+    createGeminiStreamTransform({
+      model: "gemini-2.0-flash",
+      onComplete: (r) => {
+        completed = r;
+      },
+    })
+  );
+  const reader = transformed.getReader();
+  await reader.read();
+  await reader.cancel("client went away");
+  assert.deepEqual(completed, { promptTokens: 8, outputTokens: null, reason: "client-hangup" });
+});
