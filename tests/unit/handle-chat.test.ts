@@ -583,3 +583,257 @@ test("a provider whose wireFormat has no converter is a clean 503", async () => 
   const body = (await res.json()) as { error: { message: string } };
   assert.ok(body.error.message.length > 0);
 });
+
+test("converts a non-streaming Anthropic response into OpenAI chat.completion shape", async () => {
+  upsertProvider({
+    id: "anthropic",
+    name: "Anthropic",
+    kind: "apikey",
+    baseUrl: "https://api.anthropic.com",
+    wireFormat: "anthropic",
+    enabled: true,
+  });
+  createConnection("anthropic", "primary", "sk-ant-1");
+  const fetchImpl: typeof fetch = async () =>
+    new Response(
+      JSON.stringify({
+        id: "msg_01ABC",
+        content: [{ type: "text", text: "Hello from Claude" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 20, output_tokens: 8 },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+  const apiKey = key();
+  const res = await handleChat(
+    post({ model: "claude-sonnet-4-6", messages: [{ role: "user", content: "hi" }] }),
+    apiKey,
+    { fetchImpl }
+  );
+  assert.equal(res.status, 200);
+  const body = (await res.json()) as {
+    object: string;
+    choices: Array<{ message: { content: string } }>;
+  };
+  assert.equal(body.object, "chat.completion");
+  assert.equal(body.choices[0].message.content, "Hello from Claude");
+  const row = getDb().prepare("SELECT * FROM usage_logs WHERE api_key_id = ?").get(apiKey.id) as {
+    prompt_tokens: number;
+    output_tokens: number;
+  };
+  assert.equal(row.prompt_tokens, 20);
+  assert.equal(row.output_tokens, 8);
+});
+
+test("a non-streaming OpenAI response is unchanged (registry returns null, passthrough)", async () => {
+  createConnection("openai", "primary", "sk-1");
+  const fetchImpl: typeof fetch = async () =>
+    new Response(
+      JSON.stringify({ choices: [], usage: { prompt_tokens: 3, completion_tokens: 4 } }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }
+    );
+  const res = await handleChat(
+    post({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }] }),
+    key(),
+    { fetchImpl }
+  );
+  assert.equal(res.status, 200);
+  const body = (await res.json()) as { usage: { prompt_tokens: number } };
+  assert.equal(
+    body.usage.prompt_tokens,
+    3,
+    "regression: Plan 1's raw-passthrough behavior must survive for openai"
+  );
+});
+
+test("streams a converted Anthropic response and defers usage logging to stream completion", async () => {
+  upsertProvider({
+    id: "anthropic",
+    name: "Anthropic",
+    kind: "apikey",
+    baseUrl: "https://api.anthropic.com",
+    wireFormat: "anthropic",
+    enabled: true,
+  });
+  createConnection("anthropic", "primary", "sk-ant-1");
+  const encoder = new TextEncoder();
+  const sequence =
+    'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_01S","usage":{"input_tokens":9}}}\n\n' +
+    'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}\n\n' +
+    'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}\n\n' +
+    'event: message_stop\ndata: {"type":"message_stop"}\n\n';
+  const fetchImpl: typeof fetch = async () =>
+    new Response(
+      new ReadableStream({
+        start: (c) => {
+          c.enqueue(encoder.encode(sequence));
+          c.close();
+        },
+      }),
+      { status: 200, headers: { "content-type": "text/event-stream" } }
+    );
+  const apiKey = key();
+  const res = await handleChat(
+    post({ model: "claude-sonnet-4-6", stream: true, messages: [{ role: "user", content: "hi" }] }),
+    apiKey,
+    { fetchImpl }
+  );
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("content-type"), "text/event-stream");
+
+  // BEFORE draining the body, the row must not exist yet — usage is deferred to stream
+  // completion, not written before the first byte (the bug design spec §9 fixes).
+  const beforeDrain = getDb()
+    .prepare("SELECT * FROM usage_logs WHERE api_key_id = ?")
+    .get(apiKey.id);
+  assert.equal(
+    beforeDrain,
+    undefined,
+    "usage row must not exist before the stream has been consumed"
+  );
+
+  const text = await res.text();
+  assert.match(text, /"role":"assistant"/);
+  assert.match(text, /data: \[DONE\]/);
+
+  const row = getDb().prepare("SELECT * FROM usage_logs WHERE api_key_id = ?").get(apiKey.id) as {
+    prompt_tokens: number;
+    output_tokens: number;
+    error: string | null;
+  };
+  assert.equal(row.prompt_tokens, 9, "real prompt token count, not null");
+  assert.equal(row.output_tokens, 2, "real output token count, not null");
+  assert.equal(row.error, null);
+});
+
+test("streaming OpenAI response logs immediately with null tokens (unchanged from Plan 1)", async () => {
+  createConnection("openai", "primary", "sk-1");
+  const encoder = new TextEncoder();
+  const fetchImpl: typeof fetch = async () =>
+    new Response(
+      new ReadableStream({
+        start: (c) => {
+          c.enqueue(encoder.encode('data: {"delta":"hi"}\n\n'));
+          c.enqueue(encoder.encode("data: [DONE]\n\n"));
+          c.close();
+        },
+      }),
+      { status: 200, headers: { "content-type": "text/event-stream" } }
+    );
+  const apiKey = key();
+  const res = await handleChat(
+    post({ model: "gpt-4o", stream: true, messages: [{ role: "user", content: "hi" }] }),
+    apiKey,
+    { fetchImpl }
+  );
+  assert.equal(res.status, 200);
+  // Regression: unlike Anthropic, this row exists immediately — logged before the response
+  // is even returned, exactly as Plan 1 did it. This plan deliberately does not change it.
+  const row = getDb().prepare("SELECT * FROM usage_logs WHERE api_key_id = ?").get(apiKey.id) as {
+    prompt_tokens: number | null;
+    output_tokens: number | null;
+  };
+  assert.equal(row.prompt_tokens, null);
+  assert.equal(row.output_tokens, null);
+});
+
+test("a post-dial client hangup on an Anthropic stream writes a row with partial tokens and a distinct error", async () => {
+  upsertProvider({
+    id: "anthropic",
+    name: "Anthropic",
+    kind: "apikey",
+    baseUrl: "https://api.anthropic.com",
+    wireFormat: "anthropic",
+    enabled: true,
+  });
+  createConnection("anthropic", "primary", "sk-ant-1");
+  const encoder = new TextEncoder();
+  // No message_stop — the "connection" stays open; the test cancels the response body
+  // instead, simulating the client (Janitor) disconnecting mid-stream.
+  const sequence =
+    'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_01P","usage":{"input_tokens":6}}}\n\n';
+  const fetchImpl: typeof fetch = async () =>
+    new Response(
+      new ReadableStream({
+        start: (c) => {
+          c.enqueue(encoder.encode(sequence));
+          // Deliberately never closes.
+        },
+      }),
+      { status: 200, headers: { "content-type": "text/event-stream" } }
+    );
+  const apiKey = key();
+  const res = await handleChat(
+    post({ model: "claude-sonnet-4-6", stream: true, messages: [{ role: "user", content: "hi" }] }),
+    apiKey,
+    { fetchImpl }
+  );
+  assert.ok(res.body, "must forward a live stream to cancel");
+  const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+  await reader.read();
+  await reader.cancel("client went away");
+  const row = getDb().prepare("SELECT * FROM usage_logs WHERE api_key_id = ?").get(apiKey.id) as {
+    prompt_tokens: number;
+    error: string;
+  };
+  assert.equal(row.prompt_tokens, 6);
+  assert.equal(row.error, "client disconnected mid-stream");
+});
+
+test("a billing_error from Anthropic reaches the client with a distinct, sanitized message", async () => {
+  upsertProvider({
+    id: "anthropic",
+    name: "Anthropic",
+    kind: "apikey",
+    baseUrl: "https://api.anthropic.com",
+    wireFormat: "anthropic",
+    enabled: true,
+  });
+  createConnection("anthropic", "primary", "sk-ant-1");
+  const fetchImpl: typeof fetch = async () =>
+    new Response(
+      JSON.stringify({
+        type: "error",
+        error: { type: "billing_error", message: "insufficient credit" },
+      }),
+      { status: 403 }
+    );
+  const res = await handleChat(
+    post({ model: "claude-sonnet-4-6", messages: [{ role: "user", content: "hi" }] }),
+    key(),
+    { fetchImpl }
+  );
+  assert.equal(res.status, 403);
+  const body = (await res.json()) as { error: { message: string } };
+  assert.ok(body.error.message.toLowerCase().includes("billing"));
+});
+
+// Mutant-3 permanent guard: mapAnthropicErrorMessage must be gated on wireFormat === "anthropic".
+// An OpenAI-compatible upstream returning a body that looks like an Anthropic billing_error JSON
+// must NOT get the Anthropic-specific message treatment — that would be cross-format contamination.
+test("an OpenAI upstream 403 whose body looks like Anthropic billing_error JSON is NOT remapped", async () => {
+  createConnection("openai", "primary", "sk-1");
+  const fetchImpl: typeof fetch = async () =>
+    new Response(
+      JSON.stringify({
+        type: "error",
+        error: { type: "billing_error", message: "insufficient credit" },
+      }),
+      { status: 403 }
+    );
+  const res = await handleChat(
+    post({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }] }),
+    key(),
+    { fetchImpl }
+  );
+  assert.equal(res.status, 403);
+  const body = (await res.json()) as { error: { message: string } };
+  // Must NOT contain the Anthropic-specific prefix — the raw upstream message must pass through.
+  assert.ok(
+    !body.error.message.toLowerCase().includes("billing issue with the upstream anthropic"),
+    "OpenAI upstream error must not be remapped through Anthropic error mapper"
+  );
+});

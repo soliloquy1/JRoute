@@ -65,3 +65,20 @@ export function errorEventStream(message: string): ReadableStream<Uint8Array> {
     },
   });
 }
+
+/**
+ * Same two frames as `errorEventStream`, as raw bytes for enqueueing into an ALREADY-OPEN
+ * stream controller (design spec §8.5). `errorEventStream` builds a brand-new
+ * `ReadableStream` and can only be used as a pre-stream failure response — once headers are
+ * sent and bytes are already flowing, the only channel left is a frame written into the
+ * live controller, which is what this function is for.
+ *
+ * Unlike `errorEventStream`, this does NOT hardcode `type: "upstream_error"` — callers pass
+ * the type so design spec §10's error-type mapping can flow through. Callers are
+ * responsible for sanitizing `message` before calling this — it is written to the wire
+ * as-is.
+ */
+export function errorEventBytes(message: string, type = "upstream_error"): Uint8Array {
+  const payload = JSON.stringify({ error: { message, type } });
+  return encoder.encode(`data: ${payload}\n\ndata: [DONE]\n\n`);
+}
