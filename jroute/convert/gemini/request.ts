@@ -74,6 +74,8 @@ function mapGenerationConfig(
   if (typeof body.temperature === "number") cfg.temperature = body.temperature;
   if (typeof body.top_p === "number") cfg.topP = body.top_p;
   if (typeof body.top_k === "number") cfg.topK = body.top_k;
+  // Gemini requires maxOutputTokens; the helper already defaulted `maxOutputTokens` to the
+  // model ceiling, so this is always set.
   cfg.maxOutputTokens = maxOutputTokens;
 
   const stop = body.stop;
