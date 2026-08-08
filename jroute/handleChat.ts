@@ -120,7 +120,18 @@ export async function handleChat(
     }
 
     const result = await execute(
-      { provider, connection, body: upstreamBody, signal: req.signal },
+      {
+        provider,
+        connection,
+        body: upstreamBody,
+        signal: req.signal,
+        model: requestedModel,
+        // The stream flag comes from the CLIENT request body, NOT from `upstreamBody`: the
+        // Gemini converter strips `stream` from the converted body (streaming is a URL concern
+        // there), so `upstreamBody.stream` is always undefined and the streaming URL would
+        // never be selected. `body` here is the parsed pre-conversion client request.
+        stream: body.stream === true,
+      },
       fetchImpl
     );
 
