@@ -1,0 +1,287 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { anthropicConverter, placeInjections } from "../../jroute/convert/anthropic/request.ts";
+import type { TaggedBlock } from "../../jroute/convert/types.ts";
+
+interface OutMessage {
+  role: string;
+  content: Array<{ type: string; text?: string }>;
+}
+
+const convert = (messages: unknown[], blocks: TaggedBlock[]) =>
+  anthropicConverter.convertRequest({
+    model: "claude-sonnet-4-6",
+    maxTokens: 64000,
+    body: { model: "claude-sonnet-4-6", messages },
+    blocks,
+  });
+
+const texts = (m: OutMessage) => m.content.filter((b) => b.type === "text").map((b) => b.text);
+
+/** A conversation whose turns are individually identifiable. */
+const history = () => [
+  { role: "user", content: "u1" },
+  { role: "assistant", content: "a1" },
+  { role: "user", content: "u2" },
+  { role: "assistant", content: "a2" },
+  { role: "user", content: "u3" },
+];
+
+const inject = (depth: number, content = "LORE"): TaggedBlock => ({
+  role: "system",
+  content,
+  tag: "depth-injection",
+  depth,
+});
+
+// ---------------------------------------------------------------------------
+// GUARD 1 — teleport to top. A depth-injection must never reach the system param.
+// ---------------------------------------------------------------------------
+
+test("a depth-injection never appears in the system param", () => {
+  const out = convert(history(), [inject(2)]);
+  const system = JSON.stringify(out.system ?? []);
+  assert.ok(!system.includes("LORE"), "depth-injection must NOT be hoisted into system");
+});
+
+test("a depth-injection with role:system is still not hoisted", () => {
+  const out = convert(history(), [
+    { role: "system", content: "LORE", tag: "depth-injection", depth: 2 },
+    { role: "system", content: "CARD", tag: "system-block" },
+  ]);
+  assert.deepEqual(out.system, [{ type: "text", text: "CARD" }]);
+});
+
+// ---------------------------------------------------------------------------
+// GUARD 2 — teleport to bottom. THIS is the guard the tag contract does not provide.
+// ---------------------------------------------------------------------------
+
+test("a depth-injection does NOT collapse onto the last message", () => {
+  const out = convert(history(), [inject(3)]);
+  const messages = out.messages as OutMessage[];
+  const last = messages[messages.length - 1];
+  assert.ok(
+    !texts(last).includes("LORE"),
+    "depth 3 must not land on the final turn — that is teleport-to-bottom"
+  );
+});
+
+test("depth counts messages from the end", () => {
+  // history(): [u1, a1, u2, a2, u3]. depth 1 -> the message one from the end -> a2.
+  // a2 is an assistant turn, so the injection redirects to the nearest preceding user
+  // turn, u2.
+  const out = convert(history(), [inject(1)]);
+  const messages = out.messages as OutMessage[];
+  const carrier = messages.findIndex((m) => texts(m).includes("LORE"));
+  assert.equal(messages[carrier].role, "user");
+  assert.ok(texts(messages[carrier]).includes("u2"), "expected the injection on u2");
+});
+
+test("depth 0 targets the final turn", () => {
+  const out = convert(history(), [inject(0)]);
+  const messages = out.messages as OutMessage[];
+  const last = messages[messages.length - 1];
+  assert.ok(texts(last).includes("u3"));
+  assert.ok(texts(last).includes("LORE"), "depth 0 lands on the final user turn");
+});
+
+test("two injections at different depths land on different messages", () => {
+  const out = convert(history(), [inject(0, "SHALLOW"), inject(4, "DEEP")]);
+  const messages = out.messages as OutMessage[];
+  const shallow = messages.findIndex((m) => texts(m).includes("SHALLOW"));
+  const deep = messages.findIndex((m) => texts(m).includes("DEEP"));
+  assert.notEqual(shallow, deep, "different depths must not collapse to one message");
+  assert.ok(deep < shallow, "the deeper injection sits earlier in the conversation");
+});
+
+// ---------------------------------------------------------------------------
+// Assistant-turn redirect
+// ---------------------------------------------------------------------------
+
+test("an injection targeting an assistant turn moves to the nearest preceding user turn", () => {
+  // depth 1 -> a2 (assistant) -> redirect to u2.
+  const out = convert(history(), [inject(1)]);
+  const messages = out.messages as OutMessage[];
+  const assistantCarriers = messages.filter(
+    (m) => m.role === "assistant" && texts(m).includes("LORE")
+  );
+  assert.equal(assistantCarriers.length, 0, "never put lorebook text in the model's own mouth");
+});
+
+test("when no preceding user turn exists, the injection goes to the first user turn", () => {
+  const out = convert(
+    [
+      { role: "assistant", content: "greeting" },
+      { role: "user", content: "u1" },
+    ],
+    [inject(1)]
+  );
+  const messages = out.messages as OutMessage[];
+  const carrier = messages.find((m) => texts(m).includes("LORE"));
+  assert.equal(carrier?.role, "user", "must land on a user turn, never an assistant one");
+});
+
+// ---------------------------------------------------------------------------
+// Clamping and ordering
+// ---------------------------------------------------------------------------
+
+test("depth beyond history length clamps to the top of the history", () => {
+  const out = convert(history(), [inject(99)]);
+  const messages = out.messages as OutMessage[];
+  const carrier = messages.findIndex((m) => texts(m).includes("LORE"));
+  assert.equal(carrier, 0, "an over-deep injection clamps to the first message");
+  assert.equal(messages[0].role, "user");
+});
+
+test("injections at the same depth keep registration order", () => {
+  const out = convert(history(), [inject(0, "FIRST"), inject(0, "SECOND")]);
+  const messages = out.messages as OutMessage[];
+  const last = messages[messages.length - 1];
+  const t = texts(last);
+  assert.ok(t.indexOf("FIRST") < t.indexOf("SECOND"), "same depth keeps registration order");
+});
+
+test("the injection is appended after the message's own content", () => {
+  const out = convert(history(), [inject(0)]);
+  const messages = out.messages as OutMessage[];
+  const t = texts(messages[messages.length - 1]);
+  assert.ok(t.indexOf("u3") < t.indexOf("LORE"), "the user's own text comes first");
+});
+
+test("an injection is appended as a block, never string-concatenated", () => {
+  const out = convert([{ role: "user", content: [{ type: "text", text: "u1" }] }], [inject(0)]);
+  const messages = out.messages as OutMessage[];
+  assert.deepEqual(messages[0].content, [
+    { type: "text", text: "u1" },
+    { type: "text", text: "LORE" },
+  ]);
+});
+
+// ---------------------------------------------------------------------------
+// Multi-injection collision — NOT required by the brief, added because the brief's own
+// mutation table flags this guard as possibly weak: "orderInjections replaced with the raw
+// array ... verify; if it still passes, the ordering guard is weak — say so in your
+// report." Tracing showed the 12 tests above do not actually distinguish orderInjections()
+// from a no-op passthrough, because the only same-depth case they exercise (depth 0 vs
+// depth 0) has registration order equal to sorted order by construction, and different-depth
+// cases never land two injections on the SAME final message where relative order would be
+// observable. This test constructs that exact collision: a shallow injection that redirects
+// off an assistant turn, and a deeper injection that lands on the same user turn directly,
+// registered in the OPPOSITE order from what depth-ordering requires.
+// ---------------------------------------------------------------------------
+
+test("deeper depth sorts before shallower even when registered later, same target", () => {
+  // history(): [u1, a1, u2, a2, u3]. depth 1 -> a2 (assistant) -> redirects to u2.
+  // depth 2 -> u2 directly. Registered SHALLOW (depth 1) first, DEEP (depth 2) second —
+  // the opposite of depth order — so only a real depth-sort (not registration order, and
+  // not a no-op array) puts DEEP before SHALLOW in the output.
+  const out = convert(history(), [inject(1, "SHALLOW_REDIRECT"), inject(2, "DEEP_DIRECT")]);
+  const messages = out.messages as OutMessage[];
+  const u2 = messages[2];
+  assert.equal(messages[2].role, "user");
+  const t = texts(u2);
+  assert.ok(
+    t.indexOf("DEEP_DIRECT") < t.indexOf("SHALLOW_REDIRECT"),
+    "deeper depth (2) must precede shallower depth (1) on their shared target message, " +
+      "regardless of registration order"
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Clamp-removal edge case — also NOT required by the brief. Tracing the mutation table's
+// "clamp removed — targetIdx allowed negative" mutant showed the required test ("depth
+// beyond history length clamps to the top") does not actually distinguish clamped from
+// unclamped behavior for the history() fixture used throughout this file: history() opens
+// on a user turn, so both the clamp (targetIdx -> 0) and the assistant-redirect fallback
+// (walk fails, findIndex(user) -> 0) independently land on index 0 — the clamp is masked.
+// The clamp only becomes observable when NO user turn exists anywhere in the conversation
+// AND depth exceeds history length: then the fallback's final line, `idx = targetIdx`, uses
+// the unclamped (deeply negative) targetIdx instead of a valid index, and
+// `out[idx].content` throws. This test locks in the non-crashing behavior.
+// ---------------------------------------------------------------------------
+
+// Task 8 note: through the FULL pipeline, an all-assistant history no longer reaches
+// placeInjections with any messages at all — Task 8's absorbLeadingAssistant step (§6.3
+// #4) runs first and, since every turn here is a leading assistant turn, the entire
+// history is absorbed into `system` before injection placement ever executes. That is
+// correct: with zero user turns anywhere, there is no valid message left to carry the
+// injection, so it is silently dropped rather than landing in `system` (a depth-injection
+// must never reach `system` — that invariant holds even here) or throwing. The clamp/
+// no-crash guarantee this test originally locked in still holds; it is now tested directly
+// against placeInjections() below, since the full pipeline can no longer exercise it.
+test("an all-assistant history with an over-deep injection is absorbed, not crashed", () => {
+  const out = convert(
+    [
+      { role: "assistant", content: "a1" },
+      { role: "assistant", content: "a2" },
+    ],
+    [inject(99)]
+  );
+  const messages = out.messages as OutMessage[];
+  assert.equal(messages.length, 0, "the entire all-assistant history is absorbed into system");
+  const system = JSON.stringify(out.system ?? []);
+  assert.ok(system.includes("a1") && system.includes("a2"), "the greeting content survives");
+  assert.ok(!system.includes("LORE"), "a depth-injection must never reach system, even here");
+});
+
+// This is the original Task 7 guard, re-pinned directly against placeInjections(): an
+// all-assistant array with no user turn anywhere and a depth exceeding the history length
+// must not throw (clamp fallback path), and the injection must land on the first
+// available message rather than being lost. Task 8's pipeline no longer reaches
+// placeInjections in this exact shape (see the test above), but the function itself must
+// still behave safely if ever called with this input — e.g. from a future caller, or
+// mid-conversation content that resolves to all-assistant after other normalization.
+test("placeInjections itself does not crash on an all-assistant array with an over-deep injection", () => {
+  const messages = [
+    { role: "assistant", content: [{ type: "text" as const, text: "a1" }] },
+    { role: "assistant", content: [{ type: "text" as const, text: "a2" }] },
+  ];
+  const out = placeInjections(messages, [
+    { role: "system", content: "LORE", tag: "depth-injection", depth: 99 },
+  ]);
+  const carrier = out.findIndex((m) => texts(m).includes("LORE"));
+  assert.ok(carrier >= 0, "the injection must land somewhere, not throw or vanish");
+});
+
+// ---------------------------------------------------------------------------
+// Two more collision shapes — also NOT required by the brief. Reviewer-requested
+// hardening: these two scenarios were traced ad hoc while investigating the two gaps
+// above and confirmed correct, but had no permanent regression test locking in that
+// correctness. A future refactor (e.g. one introducing per-injection index mutation,
+// mirroring the OpenAI-side splice pattern) could silently reintroduce a same-index
+// ordering bug with nothing here to catch it.
+// ---------------------------------------------------------------------------
+
+test("same-depth redirects converge without breaking registration order", () => {
+  // history(): [u1, a1, u2, a2, u3]. Two SEPARATE depth-1 injections both target a2
+  // (assistant) and both redirect to the same message, u2. Equal depth means
+  // orderInjections must not reorder them — registration order is the only tiebreaker
+  // (product spec #9) — so the first-registered injection must still come first even
+  // though both went through the assistant-turn redirect onto the identical index.
+  const out = convert(history(), [inject(1, "REDIRECT_A"), inject(1, "REDIRECT_B")]);
+  const messages = out.messages as OutMessage[];
+  const u2 = messages[2];
+  assert.equal(u2.role, "user");
+  const t = texts(u2);
+  assert.ok(
+    t.indexOf("REDIRECT_A") < t.indexOf("REDIRECT_B"),
+    "two same-depth injections converging on one message via redirect keep registration order"
+  );
+});
+
+test("double clamp: deeper depth still sorts first despite equal clamped index", () => {
+  // history(): [u1, a1, u2, a2, u3] (length 5). depth 50 and depth 99 both compute a
+  // negative pre-clamp target and both clamp to index 0. Ordering must be keyed on the
+  // RAW pre-clamp depth (99 is deeper than 50), not on the post-clamp index (identical,
+  // 0, for both) — otherwise two different over-depth injections landing on the same
+  // clamped slot would silently fall back to registration order instead of depth order.
+  const out = convert(history(), [inject(50, "CLAMP_SHALLOWER"), inject(99, "CLAMP_DEEPER")]);
+  const messages = out.messages as OutMessage[];
+  const first = messages[0];
+  assert.equal(first.role, "user");
+  const t = texts(first);
+  assert.ok(
+    t.indexOf("CLAMP_DEEPER") < t.indexOf("CLAMP_SHALLOWER"),
+    "depth 99 must precede depth 50 even though both clamp to the same index"
+  );
+});

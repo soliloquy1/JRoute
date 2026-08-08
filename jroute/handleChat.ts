@@ -1,13 +1,15 @@
 // jroute/handleChat.ts
 import { z } from "zod";
 import { jsonError } from "./errors.ts";
-import { getProvider } from "../src/lib/db/providers.ts";
 import { listConnections, markCooldown, clearCooldown } from "../src/lib/db/connections.ts";
 import { logUsage } from "../src/lib/db/usageLogs.ts";
 import { eligibleConnections } from "./selectConnection.ts";
 import { execute, cooldownMsFor } from "./executor.ts";
 import { keepaliveStream, sseHeaders } from "./sse.ts";
+import { resolveModel } from "./resolveModel.ts";
+import { getConverter } from "./convert/registry.ts";
 import type { ApiKeyRecord } from "../src/lib/db/types.ts";
+import type { TaggedBlock } from "./convert/types.ts";
 
 // `looseObject` (not `object`) at BOTH levels. A plain `z.object` strips unknown keys,
 // and the message element is what matters: stripping there silently deletes
@@ -29,10 +31,15 @@ export const ChatRequestSchema = z.looseObject({
 
 export interface HandleChatDeps {
   fetchImpl: typeof fetch;
-  providerId: string;
+  /**
+   * Tagged blocks from the prompt stage. Plan 2 populates only `system-block`; Plans 3-4
+   * supply real `depth-injection` producers. Injected here so the converter can be driven
+   * from tests before a producer exists.
+   */
+  blocks: TaggedBlock[];
 }
 
-const DEFAULTS: HandleChatDeps = { fetchImpl: fetch, providerId: "openai" };
+const DEFAULTS: HandleChatDeps = { fetchImpl: fetch, blocks: [] };
 
 interface UpstreamUsage {
   prompt_tokens?: number;
@@ -44,7 +51,7 @@ export async function handleChat(
   key: ApiKeyRecord,
   deps: Partial<HandleChatDeps> = {}
 ): Promise<Response> {
-  const { fetchImpl, providerId } = { ...DEFAULTS, ...deps };
+  const { fetchImpl, blocks } = { ...DEFAULTS, ...deps };
   const startedAt = Date.now();
 
   const parsed = ChatRequestSchema.safeParse(await req.json().catch(() => null));
@@ -53,15 +60,38 @@ export async function handleChat(
   }
   const body = parsed.data as Record<string, unknown>;
 
-  const provider = getProvider(providerId);
-  if (!provider || !provider.enabled) {
-    return jsonError(503, "No provider configured");
+  const requestedModel = String(body.model ?? "");
+
+  // The model field is now meaningful. A model that cannot be served is a 404 — the
+  // client asked for something that does not exist — which is deliberately distinct from
+  // the two 503s below, which are operator misconfigurations.
+  const resolved = resolveModel(requestedModel);
+  if (!resolved) {
+    return jsonError(404, `Unknown model: ${requestedModel}`);
+  }
+  const provider = resolved.provider;
+  const providerId = provider.id;
+
+  const converter = getConverter(provider.wireFormat);
+  if (!converter) {
+    return jsonError(503, `No converter for wire format: ${provider.wireFormat}`);
   }
 
   const candidates = eligibleConnections(listConnections(providerId), Date.now());
   if (candidates.length === 0) {
     return jsonError(503, "No available connection");
   }
+
+  // Converted once, outside the failover loop: every connection for a provider speaks the
+  // same wire format, so re-converting per attempt would be wasted work. This also fixes
+  // the provider for the whole request — the loop never re-resolves, which is what makes
+  // cross-format fallback structurally impossible.
+  const upstreamBody = converter.convertRequest({
+    model: requestedModel,
+    maxTokens: resolved.maxTokens,
+    body,
+    blocks,
+  });
 
   // A real upstream attempt and a skipped-before-dialling connection are tracked
   // SEPARATELY. Sharing one `lastMessage` let a decrypt-failed connection sitting
@@ -87,7 +117,10 @@ export async function handleChat(
       continue;
     }
 
-    const result = await execute({ provider, connection, body, signal: req.signal }, fetchImpl);
+    const result = await execute(
+      { provider, connection, body: upstreamBody, signal: req.signal },
+      fetchImpl
+    );
 
     // Operator addition A: honor the client-hangup contract.
     // Executor signals an abort as status === 0 AND errorMessage === null.
@@ -109,7 +142,7 @@ export async function handleChat(
           apiKeyId: key.id,
           providerId,
           connectionId: connection.id,
-          model: String(body.model ?? ""),
+          model: requestedModel,
           promptTokens: null,
           outputTokens: null,
           latencyMs: Date.now() - startedAt,
@@ -124,7 +157,7 @@ export async function handleChat(
         apiKeyId: key.id,
         providerId,
         connectionId: connection.id,
-        model: String(body.model ?? ""),
+        model: requestedModel,
         promptTokens: usage?.prompt_tokens ?? null,
         outputTokens: usage?.completion_tokens ?? null,
         latencyMs: Date.now() - startedAt,
@@ -144,7 +177,11 @@ export async function handleChat(
     lastConnectionId = connection.id;
 
     if (!result.retryable) break;
-    markCooldown(connection.id, Date.now() + cooldownMsFor(result.status, attempt), lastMessage);
+    markCooldown(
+      connection.id,
+      Date.now() + cooldownMsFor(result.status, attempt, result.retryAfterMs),
+      lastMessage
+    );
   }
 
   // A real attempt's outcome always wins. The credential reason is the fallback only
@@ -160,7 +197,7 @@ export async function handleChat(
     apiKeyId: key.id,
     providerId,
     connectionId: lastConnectionId,
-    model: String(body.model ?? ""),
+    model: requestedModel,
     promptTokens: null,
     outputTokens: null,
     latencyMs: Date.now() - startedAt,

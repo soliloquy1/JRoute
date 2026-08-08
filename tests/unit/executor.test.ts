@@ -1,7 +1,7 @@
 // tests/unit/executor.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execute, classifyStatus, cooldownMsFor } from "../../jroute/executor.ts";
+import { execute, classifyStatus, cooldownMsFor, describeWire } from "../../jroute/executor.ts";
 import type { Provider, Connection } from "../../src/lib/db/types.ts";
 
 const provider: Provider = {
@@ -141,4 +141,122 @@ test("returns a stream when the upstream streams", async () => {
   );
   assert.ok(res.stream instanceof ReadableStream);
   assert.equal(res.json, null);
+});
+
+const anthropicProvider: Provider = {
+  id: "anthropic",
+  name: "Anthropic",
+  kind: "apikey",
+  baseUrl: "https://api.anthropic.com",
+  wireFormat: "anthropic",
+  enabled: true,
+};
+
+const anthropicConnection: Connection = {
+  id: 2,
+  providerId: "anthropic",
+  label: "primary",
+  apiKey: "sk-ant-test",
+  priority: 100,
+  cooldownUntil: null,
+  lastError: null,
+  credentialDecryptFailed: false,
+};
+
+test("anthropic requests go to /v1/messages with x-api-key and anthropic-version", async () => {
+  let seenUrl = "";
+  let seenHeaders: Headers | null = null;
+  const fakeFetch: typeof fetch = async (input, init) => {
+    seenUrl = String(input);
+    seenHeaders = new Headers(init?.headers);
+    return new Response('{"ok":true}', {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  await execute(
+    {
+      provider: anthropicProvider,
+      connection: anthropicConnection,
+      body: { model: "claude-sonnet-4-6" },
+      signal: new AbortController().signal,
+    },
+    fakeFetch
+  );
+  assert.equal(seenUrl, "https://api.anthropic.com/v1/messages");
+  assert.equal(seenHeaders?.get("x-api-key"), "sk-ant-test");
+  assert.equal(seenHeaders?.get("anthropic-version"), "2023-06-01");
+  assert.equal(seenHeaders?.get("authorization"), null, "must NOT send a Bearer header");
+});
+
+test("openai requests are unchanged by the wire descriptor", async () => {
+  let seenUrl = "";
+  let seenHeaders: Headers | null = null;
+  const fakeFetch: typeof fetch = async (input, init) => {
+    seenUrl = String(input);
+    seenHeaders = new Headers(init?.headers);
+    return new Response('{"ok":true}', {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  await execute(
+    { provider, connection, body: { model: "gpt-4" }, signal: new AbortController().signal },
+    fakeFetch
+  );
+  assert.equal(seenUrl, "https://api.openai.com/v1/chat/completions");
+  assert.equal(seenHeaders?.get("authorization"), "Bearer sk-test");
+  assert.equal(seenHeaders?.get("anthropic-version"), null);
+  assert.equal(seenHeaders?.get("x-api-key"), null);
+});
+
+test("529 is retryable — Anthropic's overload status", () => {
+  assert.equal(classifyStatus(529).retryable, true);
+});
+
+test("execute surfaces retry-after as milliseconds", async () => {
+  const fakeFetch: typeof fetch = async () =>
+    new Response("slow down", { status: 429, headers: { "retry-after": "7" } });
+  const res = await execute(
+    {
+      provider: anthropicProvider,
+      connection: anthropicConnection,
+      body: {},
+      signal: new AbortController().signal,
+    },
+    fakeFetch
+  );
+  assert.equal(res.retryable, true);
+  assert.equal(res.retryAfterMs, 7000);
+});
+
+test("execute reports null retryAfterMs when the header is absent or unparseable", async () => {
+  const noHeader: typeof fetch = async () => new Response("boom", { status: 503 });
+  const bad: typeof fetch = async () =>
+    new Response("boom", { status: 503, headers: { "retry-after": "soon" } });
+  for (const impl of [noHeader, bad]) {
+    const res = await execute(
+      {
+        provider: anthropicProvider,
+        connection: anthropicConnection,
+        body: {},
+        signal: new AbortController().signal,
+      },
+      impl
+    );
+    assert.equal(res.retryAfterMs, null);
+  }
+});
+
+test("cooldownMsFor prefers an upstream retry-after hint over backoff", () => {
+  assert.equal(cooldownMsFor(429, 0, 7000), 7000);
+  // Still capped at five minutes, so a hostile header cannot park a connection forever.
+  assert.equal(cooldownMsFor(429, 0, 999_999_999), 300000);
+  // No hint: unchanged exponential behaviour.
+  assert.equal(cooldownMsFor(429, 0, null), 3000);
+  assert.equal(cooldownMsFor(429, 2, null), 12000);
+});
+
+test("describeWire returns null for a format with no descriptor", () => {
+  assert.equal(describeWire("gemini"), null);
 });

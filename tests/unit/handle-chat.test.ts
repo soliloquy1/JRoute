@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { TaggedBlock } from "../../jroute/convert/types.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "jroute-test-"));
 process.env.DATA_DIR = dir;
@@ -55,7 +56,7 @@ test("rejects a body that fails validation", async () => {
 
 test("returns 503 when no connection is configured", async () => {
   const res = await handleChat(
-    post({ model: "gpt-4", messages: [{ role: "user", content: "hi" }] }),
+    post({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }] }),
     key()
   );
   assert.equal(res.status, 503);
@@ -73,7 +74,7 @@ test("proxies a non-streaming response and logs usage", async () => {
     );
   const apiKey = key();
   const res = await handleChat(
-    post({ model: "gpt-4", messages: [{ role: "user", content: "hi" }] }),
+    post({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }] }),
     apiKey,
     { fetchImpl }
   );
@@ -107,7 +108,7 @@ test("falls back to the next connection and cools down the failed one", async ()
   };
 
   const res = await handleChat(
-    post({ model: "gpt-4", messages: [{ role: "user", content: "hi" }] }),
+    post({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }] }),
     key(),
     { fetchImpl }
   );
@@ -126,7 +127,7 @@ test("does NOT fall back on a terminal 400", async () => {
     return new Response("bad request", { status: 400 });
   };
   const res = await handleChat(
-    post({ model: "gpt-4", messages: [{ role: "user", content: "hi" }] }),
+    post({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }] }),
     key(),
     { fetchImpl }
   );
@@ -149,7 +150,7 @@ test("streams with SSE headers when stream is requested", async () => {
       { status: 200, headers: { "content-type": "text/event-stream" } }
     );
   const res = await handleChat(
-    post({ model: "gpt-4", stream: true, messages: [{ role: "user", content: "hi" }] }),
+    post({ model: "gpt-4o", stream: true, messages: [{ role: "user", content: "hi" }] }),
     key(),
     { fetchImpl }
   );
@@ -180,7 +181,7 @@ test("returns 499 and writes no usage row when client disconnects mid-request (a
   };
   const apiKey = key();
   const res = await handleChat(
-    post({ model: "gpt-4", messages: [{ role: "user", content: "hi" }] }),
+    post({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }] }),
     apiKey,
     { fetchImpl }
   );
@@ -218,7 +219,7 @@ test("a transport failure (status 0, non-null message) still fails over", async 
   };
 
   const res = await handleChat(
-    post({ model: "gpt-4", messages: [{ role: "user", content: "hi" }] }),
+    post({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }] }),
     key(),
     { fetchImpl }
   );
@@ -240,7 +241,7 @@ test("returns the credential reason only when EVERY candidate is decrypt-failed"
   };
   const apiKey = key();
   const res = await handleChat(
-    post({ model: "gpt-4", messages: [{ role: "user", content: "hi" }] }),
+    post({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }] }),
     apiKey,
     { fetchImpl }
   );
@@ -265,7 +266,7 @@ test("a real upstream failure outranks a decrypt-failed connection behind it", a
 
   const apiKey = key();
   const res = await handleChat(
-    post({ model: "gpt-4", messages: [{ role: "user", content: "hi" }] }),
+    post({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }] }),
     apiKey,
     { fetchImpl: async () => new Response("upstream is on fire", { status: 503 }) }
   );
@@ -293,7 +294,7 @@ test("preserves extra message fields (tool_call_id, tool_calls, name) on the way
   };
   await handleChat(
     post({
-      model: "gpt-4",
+      model: "gpt-4o",
       messages: [
         { role: "user", content: "hi", name: "westin" },
         { role: "assistant", content: null, tool_calls: [{ id: "c1", type: "function" }] },
@@ -328,7 +329,7 @@ test("accepts an assistant tool-call message with no content key, rejects a mess
   // assistant message with tool_calls and NO content — OpenAI explicitly permits this shape
   const res = await handleChat(
     post({
-      model: "gpt-4",
+      model: "gpt-4o",
       messages: [
         { role: "user", content: "call the tool" },
         {
@@ -353,7 +354,7 @@ test("accepts an assistant tool-call message with no content key, rejects a mess
   });
 
   // message with no role must still be rejected (schema guard for content alone is not enough)
-  const res2 = await handleChat(post({ model: "gpt-4", messages: [{ content: "hi" }] }), key(), {
+  const res2 = await handleChat(post({ model: "gpt-4o", messages: [{ content: "hi" }] }), key(), {
     fetchImpl,
   });
   assert.equal(res2.status, 400, "a message with no role must be rejected with 400");
@@ -376,7 +377,7 @@ test("preserves top-level unknown fields (temperature, max_tokens, custom extens
   };
   await handleChat(
     post({
-      model: "gpt-4",
+      model: "gpt-4o",
       messages: [{ role: "user", content: "hi" }],
       temperature: 0.7,
       max_tokens: 256,
@@ -414,7 +415,7 @@ test("skips connections with failed credential decryption and falls back to heal
   };
 
   const res = await handleChat(
-    post({ model: "gpt-4", messages: [{ role: "user", content: "hi" }] }),
+    post({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }] }),
     key(),
     { fetchImpl }
   );
@@ -423,4 +424,162 @@ test("skips connections with failed credential decryption and falls back to heal
   // Bad-cred connection must not have been cooled down (it's a config problem, not a health problem)
   const badConn = listConnections("openai").find((c) => c.label === "bad-cred");
   assert.equal(badConn?.cooldownUntil, null, "decrypt-failed connection must not be cooled down");
+});
+
+test("resolves the model to its provider and converts to Anthropic shape", async () => {
+  const db = getDb();
+  db.prepare("DELETE FROM connections").run();
+  db.prepare("DELETE FROM providers").run();
+  upsertProvider({
+    id: "anthropic",
+    name: "Anthropic",
+    kind: "apikey",
+    baseUrl: "https://api.anthropic.com",
+    wireFormat: "anthropic",
+    enabled: true,
+  });
+  createConnection("anthropic", "primary", "sk-ant-1");
+
+  let seenUrl = "";
+  let seenBody: Record<string, unknown> = {};
+  const fetchImpl: typeof fetch = async (input, init) => {
+    seenUrl = String(input);
+    seenBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return new Response(JSON.stringify({ id: "msg_1" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  const blocks: TaggedBlock[] = [{ role: "system", content: "CARD", tag: "system-block" }];
+  const res = await handleChat(
+    post({ model: "claude-sonnet-4-6", messages: [{ role: "user", content: "hi" }] }),
+    key(),
+    { fetchImpl, blocks }
+  );
+
+  assert.equal(res.status, 200);
+  assert.equal(seenUrl, "https://api.anthropic.com/v1/messages");
+  assert.deepEqual(seenBody.system, [{ type: "text", text: "CARD" }]);
+  assert.equal(typeof seenBody.max_tokens, "number");
+  assert.equal("messages" in seenBody, true);
+});
+
+test("an unknown model is a 404, not a 503", async () => {
+  const res = await handleChat(
+    post({ model: "no-such-model-anywhere", messages: [{ role: "user", content: "hi" }] }),
+    key(),
+    { fetchImpl: async () => new Response("{}", { status: 200 }) }
+  );
+  assert.equal(res.status, 404);
+  const body = (await res.json()) as { error: { message: string } };
+  assert.ok(!body.error.message.includes("at /"), "must not leak a stack trace");
+});
+
+test("a known model whose provider is absent is a 404", async () => {
+  const db = getDb();
+  db.prepare("DELETE FROM connections").run();
+  db.prepare("DELETE FROM providers").run();
+  const res = await handleChat(
+    post({ model: "claude-sonnet-4-6", messages: [{ role: "user", content: "hi" }] }),
+    key(),
+    { fetchImpl: async () => new Response("{}", { status: 200 }) }
+  );
+  assert.equal(res.status, 404);
+});
+
+test("the openai path still routes and converts as before", async () => {
+  const db = getDb();
+  db.prepare("DELETE FROM connections").run();
+  db.prepare("DELETE FROM providers").run();
+  upsertProvider({
+    id: "openai",
+    name: "OpenAI",
+    kind: "apikey",
+    baseUrl: "https://api.openai.com/v1",
+    wireFormat: "openai",
+    enabled: true,
+  });
+  createConnection("openai", "primary", "sk-1");
+
+  let seenUrl = "";
+  let seenBody: Record<string, unknown> = {};
+  const fetchImpl: typeof fetch = async (input, init) => {
+    seenUrl = String(input);
+    seenBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return new Response(JSON.stringify({ choices: [] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  const res = await handleChat(
+    post({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }], temperature: 0.5 }),
+    key(),
+    { fetchImpl }
+  );
+
+  assert.equal(res.status, 200);
+  assert.equal(seenUrl, "https://api.openai.com/v1/chat/completions");
+  assert.equal(seenBody.temperature, 0.5, "openai passthrough preserves unknown fields");
+});
+
+test("usage rows record the requested model id", async () => {
+  const db = getDb();
+  db.prepare("DELETE FROM connections").run();
+  db.prepare("DELETE FROM providers").run();
+  db.prepare("DELETE FROM usage_logs").run();
+  upsertProvider({
+    id: "anthropic",
+    name: "Anthropic",
+    kind: "apikey",
+    baseUrl: "https://api.anthropic.com",
+    wireFormat: "anthropic",
+    enabled: true,
+  });
+  createConnection("anthropic", "primary", "sk-ant-1");
+
+  const apiKey = key();
+  await handleChat(
+    post({ model: "claude-sonnet-4-6", messages: [{ role: "user", content: "hi" }] }),
+    apiKey,
+    {
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ id: "msg_1" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    }
+  );
+
+  const row = db
+    .prepare("SELECT model, provider_id FROM usage_logs WHERE api_key_id = ?")
+    .get(apiKey.id) as { model: string; provider_id: string };
+  assert.equal(row.model, "claude-sonnet-4-6", "log the model the client asked for");
+  assert.equal(row.provider_id, "anthropic", "and the provider that served it");
+});
+
+test("a provider whose wireFormat has no converter is a clean 503", async () => {
+  const db = getDb();
+  db.prepare("DELETE FROM connections").run();
+  db.prepare("DELETE FROM providers").run();
+  upsertProvider({
+    id: "anthropic",
+    name: "Anthropic",
+    kind: "apikey",
+    baseUrl: "https://api.anthropic.com",
+    // Force an unsupported format through the same provider the model maps to.
+    wireFormat: "gemini",
+    enabled: true,
+  });
+  createConnection("anthropic", "primary", "sk-ant-1");
+
+  const res = await handleChat(
+    post({ model: "claude-sonnet-4-6", messages: [{ role: "user", content: "hi" }] }),
+    key(),
+    { fetchImpl: async () => new Response("{}", { status: 200 }) }
+  );
+  assert.equal(res.status, 503);
+  const body = (await res.json()) as { error: { message: string } };
+  assert.ok(body.error.message.length > 0);
 });
