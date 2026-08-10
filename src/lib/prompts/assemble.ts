@@ -1,6 +1,6 @@
 import { getPreset } from "../db/presets.ts";
 import { getPromptBlock } from "../db/promptBlocks.ts";
-import type { TaggedBlock } from "../../jroute/convert/types.ts";
+import type { TaggedBlock } from "../../../jroute/convert/types.ts";
 
 /**
  * Builds the `system-block` tagged blocks JRoute itself contributes to the prompt —
