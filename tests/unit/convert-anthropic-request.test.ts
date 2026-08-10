@@ -12,13 +12,10 @@ const convert = (body: Record<string, unknown>, blocks: TaggedBlock[] = []) =>
   });
 
 test("hoists system-blocks into the top-level system param as a block array", () => {
-  const out = convert(
-    { model: "claude-sonnet-4-6", messages: [{ role: "user", content: "hi" }] },
-    [
-      { role: "system", content: "You are Ada.", tag: "system-block" },
-      { role: "system", content: "Stay in character.", tag: "system-block" },
-    ]
-  );
+  const out = convert({ model: "claude-sonnet-4-6", messages: [{ role: "user", content: "hi" }] }, [
+    { role: "system", content: "You are Ada.", tag: "system-block" },
+    { role: "system", content: "Stay in character.", tag: "system-block" },
+  ]);
   assert.deepEqual(out.system, [
     { type: "text", text: "You are Ada." },
     { type: "text", text: "Stay in character." },
@@ -159,10 +156,16 @@ test("toContentBlocks normalizes a plain string", () => {
 });
 
 test("toContentBlocks passes through an OpenAI text part array", () => {
-  assert.deepEqual(toContentBlocks([{ type: "text", text: "a" }, { type: "text", text: "b" }]), [
-    { type: "text", text: "a" },
-    { type: "text", text: "b" },
-  ]);
+  assert.deepEqual(
+    toContentBlocks([
+      { type: "text", text: "a" },
+      { type: "text", text: "b" },
+    ]),
+    [
+      { type: "text", text: "a" },
+      { type: "text", text: "b" },
+    ]
+  );
 });
 
 test("toContentBlocks converts an OpenAI image_url data URL to an Anthropic image block", () => {
@@ -195,4 +198,25 @@ test("messages carry block-array content, never raw strings", () => {
   });
   const messages = out.messages as Array<{ role: string; content: unknown }>;
   assert.deepEqual(messages[0].content, [{ type: "text", text: "hi" }]);
+});
+
+test("a system-append block lands after Janitor's own system message, a system-prepend block before it", () => {
+  const out = convert(
+    {
+      model: "claude-sonnet-4-6",
+      messages: [
+        { role: "system", content: "You are Ada, a character card." },
+        { role: "user", content: "hi" },
+      ],
+    },
+    [
+      { role: "system-append", content: "Remember the tone.", tag: "system-block" },
+      { role: "system-prepend", content: "JRoute jailbreak text.", tag: "system-block" },
+    ]
+  );
+  assert.deepEqual(out.system, [
+    { type: "text", text: "JRoute jailbreak text." },
+    { type: "text", text: "You are Ada, a character card." },
+    { type: "text", text: "Remember the tone." },
+  ]);
 });
