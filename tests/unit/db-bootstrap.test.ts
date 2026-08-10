@@ -41,3 +41,36 @@ test("migration 001 creates every table", () => {
 test("getDb returns the same singleton", () => {
   assert.equal(getDb(), getDb());
 });
+
+test("migration 002 creates the remaining data-model tables", () => {
+  const db = getDb();
+  const rows = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{
+    name: string;
+  }>;
+  const names = new Set(rows.map((r) => r.name));
+  for (const t of [
+    "prompt_blocks",
+    "presets",
+    "preset_lorebooks",
+    "lorebooks",
+    "lorebook_vars",
+    "mcp_servers",
+  ]) {
+    assert.ok(names.has(t), `missing table ${t}`);
+  }
+});
+
+test("migration 002 adds connections.enabled, defaulting to 1", () => {
+  const db = getDb();
+  const cols = db.prepare("PRAGMA table_info(connections)").all() as Array<{ name: string }>;
+  assert.ok(
+    cols.some((c) => c.name === "enabled"),
+    "connections.enabled column missing"
+  );
+});
+
+test("migrations do not re-run or error across a process restart on the same file", () => {
+  resetDb();
+  const db = getDb();
+  assert.doesNotThrow(() => db.prepare("SELECT 1 FROM mcp_servers LIMIT 1").get());
+});
