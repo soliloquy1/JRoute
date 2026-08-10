@@ -64,6 +64,7 @@ test("setApiKeyPreset can clear a preset back to null", () => {
   const { secret } = issueApiKey("janitor");
   const key = verifyApiKey(secret)!;
   setApiKeyPreset(key.id, 42);
+  assert.equal(verifyApiKey(secret)!.presetId, 42);
   setApiKeyPreset(key.id, null);
   assert.equal(verifyApiKey(secret)!.presetId, null);
 });
