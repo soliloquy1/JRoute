@@ -33,6 +33,10 @@ export function getProvider(id: string): Provider | null {
   return row ? toProvider(row) : null;
 }
 
+export function deleteProvider(id: string): void {
+  getDb().prepare("DELETE FROM providers WHERE id = ?").run(id);
+}
+
 export function upsertProvider(p: Provider): void {
   getDb()
     .prepare(
