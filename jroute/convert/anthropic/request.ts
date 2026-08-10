@@ -8,7 +8,7 @@ import type {
 
 /**
  * Anthropic content blocks. Plan 2a covers text and image only; `tool_use` /
- * `tool_result` arrive in Plan 5 when MCP gives them a consumer, and thinking blocks are
+ * `tool_result` arrive in Plan 6 when MCP gives them a consumer, and thinking blocks are
  * unscheduled (design spec §2.2).
  */
 export type AnthropicContentBlock =

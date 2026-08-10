@@ -27,7 +27,7 @@ const STOP_REASON_MAP: Record<string, string> = {
   end_turn: "stop",
   max_tokens: "length",
   stop_sequence: "stop",
-  tool_use: "tool_calls", // unreachable until Plan 5 (no tool support yet)
+  tool_use: "tool_calls", // unreachable until Plan 6 (no tool support yet)
   pause_turn: "stop",
   refusal: "content_filter",
 };
