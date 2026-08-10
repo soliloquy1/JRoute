@@ -63,6 +63,18 @@ export interface Preset {
   lorebookIds: number[];
 }
 
+export type McpTransport = "http" | "sse" | "stdio";
+
+export interface McpServer {
+  id: number;
+  name: string;
+  transport: McpTransport;
+  target: string;
+  enabled: boolean;
+  toolAllowlist: string | null;
+  confirmedAt: number | null;
+}
+
 export interface ApiKeyRecord {
   id: number;
   keyHash: string;
