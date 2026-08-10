@@ -1046,9 +1046,7 @@ function insertDefaultDatabaseSettings(db: SqliteAdapter) {
 
   // Run in an immediate transaction to avoid nested transactions
   try {
-    db.immediate(() => {
-      tx();
-    });
+    tx.immediate();
   } catch (error) {
     console.error("Transaction error inserting default settings:", error);
     throw error;
