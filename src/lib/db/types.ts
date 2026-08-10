@@ -31,6 +31,18 @@ export interface Connection {
   enabled: boolean;
 }
 
+export type LorebookScope = "character" | "global";
+
+export interface Lorebook {
+  id: number;
+  name: string;
+  source: string;
+  enabled: boolean;
+  triggerConfig: string | null;
+  scope: LorebookScope;
+  createdAt: number;
+}
+
 export interface ApiKeyRecord {
   id: number;
   keyHash: string;
