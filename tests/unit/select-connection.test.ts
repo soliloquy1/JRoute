@@ -52,3 +52,15 @@ test("breaks priority ties by id for determinism", () => {
     [1, 3]
   );
 });
+
+test("excludes disabled connections regardless of cooldown state", () => {
+  const conns: Connection[] = [
+    { ...conn(1, 1, null), enabled: false },
+    { ...conn(2, 2, null), enabled: true },
+  ];
+  const result = eligibleConnections(conns, NOW);
+  assert.deepEqual(
+    result.map((c) => c.id),
+    [2]
+  );
+});
