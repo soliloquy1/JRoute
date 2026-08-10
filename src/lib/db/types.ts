@@ -43,6 +43,16 @@ export interface Lorebook {
   createdAt: number;
 }
 
+export type PromptBlockKind = "prepend" | "append";
+
+export interface PromptBlock {
+  id: number;
+  name: string;
+  kind: PromptBlockKind;
+  content: string;
+  createdAt: number;
+}
+
 export interface Preset {
   id: number;
   name: string;
