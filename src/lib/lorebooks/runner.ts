@@ -2,7 +2,7 @@
 import { getLorebook } from "../db/lorebooks.ts";
 import { runLorebook, buildLorebookCtx, type CtxMessage } from "./sandbox.ts";
 import { scopeKeyFor } from "./scopeKey.ts";
-import type { TaggedBlock } from "../../jroute/convert/types.ts";
+import type { TaggedBlock } from "../../../jroute/convert/types.ts";
 
 const DEFAULT_DEPTH = 2;
 
