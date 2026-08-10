@@ -13,8 +13,15 @@ process.env.STORAGE_ENCRYPTION_KEY = "0".repeat(64);
 
 const { getDb, resetDb } = await import("../../src/lib/db/bootstrap.ts");
 const { upsertProvider, getProvider } = await import("../../src/lib/db/providers.ts");
-const { createConnection, listConnections, markCooldown, clearCooldown } =
-  await import("../../src/lib/db/connections.ts");
+const {
+  createConnection,
+  listConnections,
+  markCooldown,
+  clearCooldown,
+  updateConnection,
+  deleteConnection,
+  getConnectionByProviderAndLabel,
+} = await import("../../src/lib/db/connections.ts");
 
 after(() => {
   resetDb();
@@ -95,4 +102,52 @@ test("markCooldown and clearCooldown move cooldownUntil", () => {
   clearCooldown(id);
   assert.equal(listConnections("openai")[0].cooldownUntil, null);
   assert.equal(listConnections("openai")[0].lastError, null);
+});
+
+test("new connections default to enabled", () => {
+  createConnection("openai", "a", "k1");
+  assert.equal(listConnections("openai")[0].enabled, true);
+});
+
+test("updateConnection can disable a connection without deleting it", () => {
+  const id = createConnection("openai", "a", "k1");
+  updateConnection(id, { enabled: false });
+  const conn = listConnections("openai")[0];
+  assert.equal(conn.enabled, false);
+  assert.equal(conn.apiKey, "k1", "disabling must not touch the credential");
+});
+
+test("updateConnection re-encrypts a new apiKey", () => {
+  const id = createConnection("openai", "a", "k1");
+  updateConnection(id, { apiKey: "k2" });
+  assert.equal(listConnections("openai")[0].apiKey, "k2");
+  const raw = getDb().prepare("SELECT api_key FROM connections WHERE id = ?").get(id) as {
+    api_key: string;
+  };
+  assert.notEqual(raw.api_key, "k2", "must still be stored encrypted");
+});
+
+test("updateConnection updates only the given fields", () => {
+  const id = createConnection("openai", "a", "k1");
+  updateConnection(id, { priority: 5 });
+  const conn = listConnections("openai")[0];
+  assert.equal(conn.priority, 5);
+  assert.equal(conn.label, "a", "unpatched fields must survive");
+  assert.equal(conn.apiKey, "k1");
+});
+
+test("deleteConnection removes the row", () => {
+  const id = createConnection("openai", "a", "k1");
+  deleteConnection(id);
+  assert.equal(listConnections("openai").length, 0);
+});
+
+test("getConnectionByProviderAndLabel finds an existing connection", () => {
+  createConnection("openai", "primary", "k1");
+  const found = getConnectionByProviderAndLabel("openai", "primary");
+  assert.equal(found?.label, "primary");
+});
+
+test("getConnectionByProviderAndLabel returns null when no match", () => {
+  assert.equal(getConnectionByProviderAndLabel("openai", "nope"), null);
 });

@@ -28,6 +28,7 @@ export interface Connection {
    * silently reporting "no connection available".
    */
   credentialDecryptFailed: boolean;
+  enabled: boolean;
 }
 
 export interface ApiKeyRecord {

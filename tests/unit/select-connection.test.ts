@@ -12,6 +12,7 @@ const conn = (id: number, priority: number, cooldownUntil: number | null): Conne
   cooldownUntil,
   lastError: null,
   credentialDecryptFailed: false,
+  enabled: true,
 });
 
 const NOW = 1_000_000;
