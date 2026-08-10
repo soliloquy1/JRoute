@@ -18,8 +18,12 @@ const { createConnection, listConnections } = await import("../../src/lib/db/con
 const { issueApiKey, verifyApiKey, setApiKeyPreset } =
   await import("../../src/lib/auth/apiKeys.ts");
 const { createPromptBlock } = await import("../../src/lib/db/promptBlocks.ts");
-const { createPreset } = await import("../../src/lib/db/presets.ts");
+const { createPreset, setPresetLorebooks } = await import("../../src/lib/db/presets.ts");
+const { createLorebook } = await import("../../src/lib/db/lorebooks.ts");
+const { warmUpSandbox } = await import("../../src/lib/lorebooks/sandbox.ts");
 const { handleChat } = await import("../../jroute/handleChat.ts");
+
+await warmUpSandbox();
 
 after(() => {
   resetDb();
@@ -879,4 +883,46 @@ test("an OpenAI upstream 403 whose body looks like Anthropic billing_error JSON 
     !body.error.message.toLowerCase().includes("billing issue with the upstream anthropic"),
     "OpenAI upstream error must not be remapped through Anthropic error mapper"
   );
+});
+
+test("a lorebook scoped to the key's preset produces a depth-injection that reaches the upstream request", async () => {
+  createConnection("openai", "primary", "sk-test");
+
+  const lorebookId = createLorebook(
+    "tavern-lore",
+    'function activate(ctx) { return ctx.match("\\\\btavern\\\\b") ? "The Prancing Pony is run by Barliman." : null; }'
+  );
+  const presetId = createPreset("with-lorebook");
+  setPresetLorebooks(presetId, [lorebookId]);
+  const rawKey = issueApiKey("test-key");
+  setApiKeyPreset(rawKey.id, presetId);
+  const apiKey = verifyApiKey(rawKey.secret)!;
+
+  let capturedBody: unknown = null;
+  const fetchImpl: typeof fetch = async (_url, init) => {
+    capturedBody = JSON.parse(String(init?.body));
+    return new Response(JSON.stringify({ id: "x", choices: [], usage: {} }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  await handleChat(
+    post({
+      model: "gpt-4o",
+      messages: [
+        { role: "system", content: "Ada is a helpful robot." },
+        { role: "user", content: "let's meet at the tavern" },
+      ],
+    }),
+    apiKey,
+    { fetchImpl }
+  );
+
+  const messages = (capturedBody as { messages: Array<{ role: string; content: unknown }> })
+    .messages;
+  const found = messages.some(
+    (m) => typeof m.content === "string" && m.content.includes("Prancing Pony")
+  );
+  assert.ok(found, "lorebook depth-injection content must reach the upstream request");
 });
