@@ -1,6 +1,8 @@
 // src/lib/lorebooks/sandbox.ts
 import { getQuickJS, shouldInterruptAfterDeadline } from "quickjs-emscripten";
 import type { QuickJSContext, QuickJSHandle, QuickJSWASMModule } from "quickjs-emscripten";
+import isSafeRegex from "safe-regex";
+import { getLorebookVar, setLorebookVar } from "../db/lorebookVars.ts";
 
 export interface SandboxLimits {
   memoryLimitBytes: number;
@@ -89,7 +91,7 @@ export function runLorebook(
     try {
       buildCtx({ context, global: context.global });
 
-      const wrapped = `(function activateWrapper(){ ${source}\n return typeof activate === "function" ? activate(typeof __ctx !== "undefined" ? __ctx : undefined) : null; })()`;
+      const wrapped = `(function activateWrapper(){\n${source}\nif (typeof activate === "function") {\n  return activate(typeof __ctx !== "undefined" ? __ctx : undefined);\n}\nreturn null;\n})()`;
       const evalResult = context.evalCode(wrapped);
 
       let value: unknown;
@@ -111,4 +113,89 @@ export function runLorebook(
   } finally {
     runtime.dispose();
   }
+}
+
+export interface CtxMessage {
+  role: string;
+  content: string;
+}
+
+export interface CtxInput {
+  messages: CtxMessage[];
+  lastUserMessage: string;
+  characterName: string;
+  lorebookId: number;
+  scopeKey: string;
+}
+
+/** §7.2: patterns are validated host-side before ever running, and matched against a
+ * length-bounded haystack — an unbounded haystack combined with an already-safe pattern
+ * can still be slow on pathological input sizes, so both sides are capped independently.
+ */
+const MAX_HAYSTACK_LENGTH = 8192;
+
+export function buildLorebookCtx(input: CtxInput): (bridge: SandboxBridge) => void {
+  return ({ context, global }) => {
+    const ctxHandle = context.newObject();
+
+    context.setProp(ctxHandle, "lastUserMessage", context.newString(input.lastUserMessage));
+    context.setProp(ctxHandle, "characterName", context.newString(input.characterName));
+    context.setProp(ctxHandle, "messageCount", context.newNumber(input.messages.length));
+
+    const getMessageHandle = context.newFunction("getMessage", (indexHandle) => {
+      const index = context.dump(indexHandle) as number;
+      const msg = input.messages[index];
+      if (!msg) return context.null;
+      const out = context.newObject();
+      context.setProp(out, "role", context.newString(msg.role));
+      context.setProp(out, "content", context.newString(msg.content));
+      return out;
+    });
+    context.setProp(ctxHandle, "getMessage", getMessageHandle);
+    getMessageHandle.dispose();
+
+    const matchHandle = context.newFunction("match", (patternHandle) => {
+      const pattern = context.dump(patternHandle);
+      if (typeof pattern !== "string" || !isSafeRegex(pattern)) {
+        return context.false;
+      }
+      let re: RegExp;
+      try {
+        re = new RegExp(pattern);
+      } catch {
+        return context.false;
+      }
+      const haystack = input.lastUserMessage.slice(0, MAX_HAYSTACK_LENGTH);
+      return re.test(haystack) ? context.true : context.false;
+    });
+    context.setProp(ctxHandle, "match", matchHandle);
+    matchHandle.dispose();
+
+    const varsHandle = context.newObject();
+    const varsGetHandle = context.newFunction("get", (keyHandle) => {
+      const key = context.dump(keyHandle);
+      if (typeof key !== "string") return context.null;
+      const value = getLorebookVar(input.lorebookId, input.scopeKey, key);
+      return value === null ? context.null : context.newString(value);
+    });
+    context.setProp(varsHandle, "get", varsGetHandle);
+    varsGetHandle.dispose();
+
+    const varsSetHandle = context.newFunction("set", (keyHandle, valueHandle) => {
+      const key = context.dump(keyHandle);
+      const value = context.dump(valueHandle);
+      if (typeof key === "string" && typeof value === "string") {
+        setLorebookVar(input.lorebookId, input.scopeKey, key, value);
+      }
+      return context.undefined;
+    });
+    context.setProp(varsHandle, "set", varsSetHandle);
+    varsSetHandle.dispose();
+
+    context.setProp(ctxHandle, "vars", varsHandle);
+    varsHandle.dispose();
+
+    context.setProp(global, "__ctx", ctxHandle);
+    ctxHandle.dispose();
+  };
 }
