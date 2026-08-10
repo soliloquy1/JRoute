@@ -43,6 +43,16 @@ export interface Lorebook {
   createdAt: number;
 }
 
+export interface Preset {
+  id: number;
+  name: string;
+  prependBlockId: number | null;
+  appendBlockId: number | null;
+  toolMode: ToolMode;
+  createdAt: number;
+  lorebookIds: number[];
+}
+
 export interface ApiKeyRecord {
   id: number;
   keyHash: string;
