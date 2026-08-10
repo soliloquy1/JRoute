@@ -10,7 +10,8 @@ const dir = mkdtempSync(join(tmpdir(), "jroute-test-"));
 process.env.DATA_DIR = dir;
 
 const { getDb, resetDb } = await import("../../src/lib/db/bootstrap.ts");
-const { issueApiKey, verifyApiKey, revokeApiKey } = await import("../../src/lib/auth/apiKeys.ts");
+const { issueApiKey, verifyApiKey, revokeApiKey, setApiKeyPreset } =
+  await import("../../src/lib/auth/apiKeys.ts");
 
 after(() => {
   resetDb();
@@ -47,4 +48,22 @@ test("revoked key stops verifying", () => {
   const { id, secret } = issueApiKey("b");
   revokeApiKey(id);
   assert.equal(verifyApiKey(secret), null);
+});
+
+test("setApiKeyPreset associates a key with a preset, readable via verifyApiKey", () => {
+  const { secret } = issueApiKey("janitor");
+  const before = verifyApiKey(secret)!;
+  assert.equal(before.presetId, null);
+
+  setApiKeyPreset(before.id, 42);
+  const after = verifyApiKey(secret)!;
+  assert.equal(after.presetId, 42);
+});
+
+test("setApiKeyPreset can clear a preset back to null", () => {
+  const { secret } = issueApiKey("janitor");
+  const key = verifyApiKey(secret)!;
+  setApiKeyPreset(key.id, 42);
+  setApiKeyPreset(key.id, null);
+  assert.equal(verifyApiKey(secret)!.presetId, null);
 });
