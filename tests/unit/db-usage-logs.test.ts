@@ -9,7 +9,7 @@ const dir = mkdtempSync(join(tmpdir(), "jroute-test-"));
 process.env.DATA_DIR = dir;
 
 const { getDb, resetDb } = await import("../../src/lib/db/bootstrap.ts");
-const { logUsage, getUsageByApiKey, getUsageByProvider, getUsageSummary } =
+const { logUsage, getUsageByApiKey, getUsageByProvider, getUsageSummary, getDailyRequestCounts } =
   await import("../../src/lib/db/usageLogs.ts");
 
 after(() => {
@@ -164,4 +164,32 @@ test("getUsageSummary on an empty table returns zeros, not null", () => {
     totalOutputTokens: 0,
     avgLatencyMs: 0,
   });
+});
+
+function insertLog(createdAt: number): void {
+  getDb()
+    .prepare("INSERT INTO usage_logs (latency_ms, tool_rounds, created_at) VALUES (?, ?, ?)")
+    .run(10, 0, createdAt);
+}
+
+test("getDailyRequestCounts groups by day and orders ascending", () => {
+  const day1 = Date.UTC(2026, 0, 1, 12);
+  const day2 = Date.UTC(2026, 0, 2, 12);
+  insertLog(day1);
+  insertLog(day1);
+  insertLog(day2);
+
+  const rows = getDailyRequestCounts(day1 - 1000);
+  assert.deepEqual(rows, [
+    { day: "2026-01-01", count: 2 },
+    { day: "2026-01-02", count: 1 },
+  ]);
+});
+
+test("getDailyRequestCounts excludes rows before the cutoff", () => {
+  insertLog(Date.UTC(2025, 11, 1, 0));
+  insertLog(Date.UTC(2026, 0, 5, 0));
+
+  const rows = getDailyRequestCounts(Date.UTC(2026, 0, 1, 0));
+  assert.deepEqual(rows, [{ day: "2026-01-05", count: 1 }]);
 });

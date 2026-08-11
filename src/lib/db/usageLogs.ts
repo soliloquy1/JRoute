@@ -121,3 +121,17 @@ export function getUsageSummary(sinceMs: number): UsageSummary {
   };
   return row;
 }
+
+export interface DailyCount {
+  day: string;
+  count: number;
+}
+
+export function getDailyRequestCounts(sinceMs: number): DailyCount[] {
+  return getDb()
+    .prepare(
+      `SELECT date(created_at / 1000, 'unixepoch') as day, COUNT(*) as count
+       FROM usage_logs WHERE created_at >= ? GROUP BY day ORDER BY day ASC`
+    )
+    .all(sinceMs) as DailyCount[];
+}
