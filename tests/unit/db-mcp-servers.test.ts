@@ -72,3 +72,22 @@ test("deleteMcpServer removes the row", () => {
   deleteMcpServer(id);
   assert.equal(getMcpServer(id), null);
 });
+
+test("createMcpServer accepts and persists a triggerPattern, defaulting to null", () => {
+  const withPattern = createMcpServer("search", "http", "https://example.com/mcp", {
+    triggerPattern: "\\bsearch for\\b",
+  });
+  const server = getMcpServer(withPattern)!;
+  assert.equal(server.triggerPattern, "\\bsearch for\\b");
+
+  const withoutPattern = createMcpServer("other", "http", "https://example.com/mcp2");
+  assert.equal(getMcpServer(withoutPattern)!.triggerPattern, null);
+});
+
+test("updateMcpServer can set and clear triggerPattern", () => {
+  const id = createMcpServer("search", "http", "https://example.com/mcp");
+  updateMcpServer(id, { triggerPattern: "\\bweather\\b" });
+  assert.equal(getMcpServer(id)!.triggerPattern, "\\bweather\\b");
+  updateMcpServer(id, { triggerPattern: null });
+  assert.equal(getMcpServer(id)!.triggerPattern, null);
+});

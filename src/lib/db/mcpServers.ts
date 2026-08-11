@@ -9,6 +9,7 @@ interface McpServerRow {
   target: string;
   enabled: number;
   tool_allowlist: string | null;
+  trigger_pattern: string | null;
   confirmed_at: number | null;
 }
 
@@ -20,6 +21,7 @@ function toServer(row: McpServerRow): McpServer {
     target: row.target,
     enabled: row.enabled !== 0,
     toolAllowlist: row.tool_allowlist,
+    triggerPattern: row.trigger_pattern,
     confirmedAt: row.confirmed_at,
   };
 }
@@ -28,14 +30,21 @@ export function createMcpServer(
   name: string,
   transport: McpTransport,
   target: string,
-  opts: Partial<{ enabled: boolean; toolAllowlist: string }> = {}
+  opts: Partial<{ enabled: boolean; toolAllowlist: string; triggerPattern: string }> = {}
 ): number {
   const info = getDb()
     .prepare(
-      `INSERT INTO mcp_servers (name, transport, target, enabled, tool_allowlist)
-       VALUES (?, ?, ?, ?, ?)`
+      `INSERT INTO mcp_servers (name, transport, target, enabled, tool_allowlist, trigger_pattern)
+       VALUES (?, ?, ?, ?, ?, ?)`
     )
-    .run(name, transport, target, opts.enabled === false ? 0 : 1, opts.toolAllowlist ?? null);
+    .run(
+      name,
+      transport,
+      target,
+      opts.enabled === false ? 0 : 1,
+      opts.toolAllowlist ?? null,
+      opts.triggerPattern ?? null
+    );
   return Number(info.lastInsertRowid);
 }
 
@@ -52,7 +61,13 @@ export function listMcpServers(): McpServer[] {
 
 export function updateMcpServer(
   id: number,
-  patch: Partial<{ name: string; target: string; enabled: boolean; toolAllowlist: string | null }>
+  patch: Partial<{
+    name: string;
+    target: string;
+    enabled: boolean;
+    toolAllowlist: string | null;
+    triggerPattern: string | null;
+  }>
 ): void {
   const sets: string[] = [];
   const params: unknown[] = [];
@@ -71,6 +86,10 @@ export function updateMcpServer(
   if (patch.toolAllowlist !== undefined) {
     sets.push("tool_allowlist = ?");
     params.push(patch.toolAllowlist);
+  }
+  if (patch.triggerPattern !== undefined) {
+    sets.push("trigger_pattern = ?");
+    params.push(patch.triggerPattern);
   }
   if (sets.length === 0) return;
   params.push(id);

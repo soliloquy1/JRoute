@@ -72,6 +72,7 @@ export interface McpServer {
   target: string;
   enabled: boolean;
   toolAllowlist: string | null;
+  triggerPattern: string | null;
   confirmedAt: number | null;
 }
 
