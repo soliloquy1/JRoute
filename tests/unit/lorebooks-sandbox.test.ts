@@ -183,6 +183,65 @@ test("ctx.vars.get returns null for an unset key, not undefined or a throw", () 
   assert.deepEqual(outcome, { kind: "inactive" });
 });
 
+test("ctx.vars.set persists a value at exactly the 64KB cap", () => {
+  const ctx = buildLorebookCtx({
+    messages: [],
+    lastUserMessage: "",
+    characterName: "",
+    lorebookId: testLorebookId,
+    scopeKey: "cap-scope-at-limit",
+  });
+  const atCap = "x".repeat(64 * 1024);
+  const write = runLorebook(
+    'function activate(ctx) { ctx.vars.set("k", __VALUE__); return "done"; }'.replace(
+      "__VALUE__",
+      JSON.stringify(atCap)
+    ),
+    ctx
+  );
+  assert.deepEqual(write, { kind: "ok", result: "done" });
+
+  const readCtx = buildLorebookCtx({
+    messages: [],
+    lastUserMessage: "",
+    characterName: "",
+    lorebookId: testLorebookId,
+    scopeKey: "cap-scope-at-limit",
+  });
+  const read = runLorebook('function activate(ctx) { return ctx.vars.get("k"); }', readCtx);
+  assert.deepEqual(read, { kind: "ok", result: atCap });
+});
+
+test("ctx.vars.set over the 64KB cap is silently rejected, not persisted or truncated (design spec 7.2)", () => {
+  const ctx = buildLorebookCtx({
+    messages: [],
+    lastUserMessage: "",
+    characterName: "",
+    lorebookId: testLorebookId,
+    scopeKey: "cap-scope-over-limit",
+  });
+  const overCap = "x".repeat(64 * 1024 + 1);
+  const write = runLorebook(
+    'function activate(ctx) { ctx.vars.set("k", __VALUE__); return "done"; }'.replace(
+      "__VALUE__",
+      JSON.stringify(overCap)
+    ),
+    ctx
+  );
+  // ctx.vars.set() never throws, so the guest script runs to completion regardless.
+  assert.deepEqual(write, { kind: "ok", result: "done" });
+
+  const readCtx = buildLorebookCtx({
+    messages: [],
+    lastUserMessage: "",
+    characterName: "",
+    lorebookId: testLorebookId,
+    scopeKey: "cap-scope-over-limit",
+  });
+  const read = runLorebook('function activate(ctx) { return ctx.vars.get("k"); }', readCtx);
+  assert.deepEqual(read, { kind: "inactive" });
+});
+
 test("ctx.vars is isolated per scopeKey", () => {
   const ctxA = buildLorebookCtx({
     messages: [],

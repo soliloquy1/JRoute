@@ -140,6 +140,16 @@ export interface CtxInput {
  */
 const MAX_HAYSTACK_LENGTH = 8192;
 
+/** §7.2's "ctx.vars writes capped at 64 KB per lorebook": unlike the memory/instruction/
+ * wall-clock limits above, `ctx.vars.set` writes straight to SQLite and persists across
+ * requests — the runtime teardown at the end of `runLorebook` does not undo it. Measured in
+ * bytes via `Buffer.byteLength` (not `value.length`, which counts UTF-16 code units and
+ * would undercount multi-byte characters) to match actual on-disk size. An over-limit write
+ * is silently not honored rather than thrown, matching how the other limits degrade the
+ * lorebook's own execution instead of crashing anything.
+ */
+const MAX_VARS_VALUE_BYTES = 64 * 1024;
+
 export function buildLorebookCtx(input: CtxInput): (bridge: SandboxBridge) => void {
   return ({ context, global }) => {
     const ctxHandle = context.newObject();
@@ -196,7 +206,11 @@ export function buildLorebookCtx(input: CtxInput): (bridge: SandboxBridge) => vo
     const varsSetHandle = context.newFunction("set", (keyHandle, valueHandle) => {
       const key = context.dump(keyHandle);
       const value = context.dump(valueHandle);
-      if (typeof key === "string" && typeof value === "string") {
+      if (
+        typeof key === "string" &&
+        typeof value === "string" &&
+        Buffer.byteLength(value, "utf8") <= MAX_VARS_VALUE_BYTES
+      ) {
         setLorebookVar(input.lorebookId, input.scopeKey, key, value);
       }
       return context.undefined;

@@ -65,6 +65,12 @@ export function runLorebooksForRequest(input: RunnerInput): TaggedBlock[] {
       scopeKey,
     };
 
+    // Deviation from §7.5: the design spec calls for one shared QuickJS runtime per
+    // request (to avoid a bulk message copy per lorebook), but `runLorebook` here creates
+    // one runtime per lorebook instead. The spec's stated cost concern is neutralized by
+    // the lazy `ctx.getMessage`/`ctx.messageCount` marshaling already in place (no bulk
+    // copy happens either way), and per-lorebook runtime isolation is an additional
+    // security benefit — one lorebook's guest heap can't affect another's — not a compromise.
     const outcome = runLorebook(lorebook.source, buildLorebookCtx(ctxInput));
     if (outcome.kind !== "ok") continue;
 
