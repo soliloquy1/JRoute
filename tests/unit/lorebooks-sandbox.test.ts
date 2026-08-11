@@ -7,6 +7,7 @@ import {
   warmUpSandbox,
   buildLorebookCtx,
 } from "../../src/lib/lorebooks/sandbox.ts";
+import { getQuickJS } from "quickjs-emscripten";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -76,6 +77,22 @@ test("the instruction-tick proxy alone (wall clock generous) still kills a tight
     maxInterruptTicks: 100,
   });
   assert.equal(outcome.kind, "error");
+});
+
+test("a newRuntime failure inside runLorebook yields kind:error, never a thrown exception", async (t) => {
+  // getQuickJS() is memoized to a process-wide singleton inside quickjs-emscripten, so this
+  // resolves to the exact same QuickJSWASMModule instance runLorebook already warmed up via
+  // warmUpSandbox() above — mocking newRuntime on it reaches the sandbox's internal
+  // `cachedModule` without needing sandbox.ts to expose any test-only hook. t.mock is scoped to
+  // this test and restores the original newRuntime automatically once the test finishes, even
+  // if an assertion below throws, so later tests in this file always see the real QuickJS module.
+  const realModule = await getQuickJS();
+  t.mock.method(realModule, "newRuntime", () => {
+    throw new Error("simulated newRuntime failure");
+  });
+
+  const outcome = runLorebook("function activate() { return 1; }", () => {});
+  assert.deepEqual(outcome, { kind: "error", reason: "simulated newRuntime failure" });
 });
 
 const baseCtx = () =>

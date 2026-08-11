@@ -1,6 +1,11 @@
 // src/lib/lorebooks/sandbox.ts
 import { getQuickJS, shouldInterruptAfterDeadline } from "quickjs-emscripten";
-import type { QuickJSContext, QuickJSHandle, QuickJSWASMModule } from "quickjs-emscripten";
+import type {
+  QuickJSContext,
+  QuickJSHandle,
+  QuickJSRuntime,
+  QuickJSWASMModule,
+} from "quickjs-emscripten";
 import isSafeRegex from "safe-regex";
 import { getLorebookVar, setLorebookVar } from "../db/lorebookVars.ts";
 
@@ -77,16 +82,17 @@ export function runLorebook(
   const deadline = Date.now() + limits.wallClockMs;
   const deadlineHandler = shouldInterruptAfterDeadline(deadline);
 
-  const runtime = cachedModule.newRuntime({
-    memoryLimitBytes: limits.memoryLimitBytes,
-    interruptHandler: (rt) => {
-      ticks += 1;
-      if (ticks > limits.maxInterruptTicks) return true;
-      return deadlineHandler(rt);
-    },
-  });
-
+  let runtime: QuickJSRuntime | undefined;
   try {
+    runtime = cachedModule.newRuntime({
+      memoryLimitBytes: limits.memoryLimitBytes,
+      interruptHandler: (rt) => {
+        ticks += 1;
+        if (ticks > limits.maxInterruptTicks) return true;
+        return deadlineHandler(rt);
+      },
+    });
+
     const context = runtime.newContext();
     try {
       buildCtx({ context, global: context.global });
@@ -111,7 +117,7 @@ export function runLorebook(
   } catch (err) {
     return { kind: "error", reason: err instanceof Error ? err.message : String(err) };
   } finally {
-    runtime.dispose();
+    runtime?.dispose();
   }
 }
 
@@ -138,17 +144,23 @@ export function buildLorebookCtx(input: CtxInput): (bridge: SandboxBridge) => vo
   return ({ context, global }) => {
     const ctxHandle = context.newObject();
 
-    context.setProp(ctxHandle, "lastUserMessage", context.newString(input.lastUserMessage));
-    context.setProp(ctxHandle, "characterName", context.newString(input.characterName));
-    context.setProp(ctxHandle, "messageCount", context.newNumber(input.messages.length));
+    context
+      .newString(input.lastUserMessage)
+      .consume((h) => context.setProp(ctxHandle, "lastUserMessage", h));
+    context
+      .newString(input.characterName)
+      .consume((h) => context.setProp(ctxHandle, "characterName", h));
+    context
+      .newNumber(input.messages.length)
+      .consume((h) => context.setProp(ctxHandle, "messageCount", h));
 
     const getMessageHandle = context.newFunction("getMessage", (indexHandle) => {
       const index = context.dump(indexHandle) as number;
       const msg = input.messages[index];
       if (!msg) return context.null;
       const out = context.newObject();
-      context.setProp(out, "role", context.newString(msg.role));
-      context.setProp(out, "content", context.newString(msg.content));
+      context.newString(msg.role).consume((h) => context.setProp(out, "role", h));
+      context.newString(msg.content).consume((h) => context.setProp(out, "content", h));
       return out;
     });
     context.setProp(ctxHandle, "getMessage", getMessageHandle);
