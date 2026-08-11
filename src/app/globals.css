@@ -1,6 +1,4 @@
 @import "tailwindcss";
-@import "fumadocs-ui/css/neutral.css";
-@import "fumadocs-ui/css/preset.css";
 /* Self-hosted Material Symbols icon font (#3695): the Google Fonts CDN
    (fonts.googleapis.com) is blocked in some networks (e.g. mainland China),
    which made every icon ligature fall back to its literal text name and broke
@@ -14,7 +12,6 @@
    (e.g. Next.js route groups like "(dashboard)"). Explicit @source
    directives ensure all utility classes in route groups are included. */
 @source "../app/(dashboard)";
-@source "../../node_modules/fumadocs-ui/dist/**/*.js";
 @source not "../../*.sqlite*";
 @source not "../../.claude*";
 @source not "../../.claude-memory";
