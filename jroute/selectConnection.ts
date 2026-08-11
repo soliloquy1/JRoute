@@ -6,6 +6,6 @@ import type { Connection } from "../src/lib/db/types.ts";
  */
 export function eligibleConnections(all: Connection[], now: number): Connection[] {
   return all
-    .filter((c) => c.cooldownUntil === null || c.cooldownUntil <= now)
+    .filter((c) => c.enabled && (c.cooldownUntil === null || c.cooldownUntil <= now))
     .sort((a, b) => a.priority - b.priority || a.id - b.id);
 }

@@ -2,7 +2,7 @@
  * JRoute has no models table and no provider registry: migration 001 creates six tables,
  * none of them a catalog, and OmniRoute's `providerRegistry` is the 236-file import
  * closure the product spec (§2.1) deliberately refuses to vendor. This static map is the
- * Plan 2 answer. Plan 6 replaces it with an operator-editable table once the dashboard
+ * Plan 2 answer. Plan 7 replaces it with an operator-editable table once the dashboard
  * exists to edit one.
  *
  * `maxTokens` is the per-model value used to satisfy Anthropic's required `max_tokens`

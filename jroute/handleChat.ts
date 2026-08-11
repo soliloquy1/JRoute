@@ -99,7 +99,7 @@ export async function handleChat(
   // SEPARATELY. Sharing one `lastMessage` let a decrypt-failed connection sitting
   // *behind* a genuinely failing one rewrite the failure story: the status stayed the
   // real 503 while the message became "credential could not be decrypted", so the
-  // response and the `usage_logs` row Plan 6's dashboard reads both recorded the wrong
+  // response and the `usage_logs` row Plan 7's dashboard reads both recorded the wrong
   // cause. The credential reason is only surfaced when no real attempt ever produced one.
   let lastStatus: number | null = null;
   let lastMessage: string | null = null;

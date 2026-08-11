@@ -28,6 +28,51 @@ export interface Connection {
    * silently reporting "no connection available".
    */
   credentialDecryptFailed: boolean;
+  enabled: boolean;
+}
+
+export type LorebookScope = "character" | "global";
+
+export interface Lorebook {
+  id: number;
+  name: string;
+  source: string;
+  enabled: boolean;
+  triggerConfig: string | null;
+  scope: LorebookScope;
+  createdAt: number;
+}
+
+export type PromptBlockKind = "prepend" | "append";
+
+export interface PromptBlock {
+  id: number;
+  name: string;
+  kind: PromptBlockKind;
+  content: string;
+  createdAt: number;
+}
+
+export interface Preset {
+  id: number;
+  name: string;
+  prependBlockId: number | null;
+  appendBlockId: number | null;
+  toolMode: ToolMode;
+  createdAt: number;
+  lorebookIds: number[];
+}
+
+export type McpTransport = "http" | "sse" | "stdio";
+
+export interface McpServer {
+  id: number;
+  name: string;
+  transport: McpTransport;
+  target: string;
+  enabled: boolean;
+  toolAllowlist: string | null;
+  confirmedAt: number | null;
 }
 
 export interface ApiKeyRecord {

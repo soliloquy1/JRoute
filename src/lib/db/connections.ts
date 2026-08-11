@@ -11,6 +11,7 @@ interface ConnectionRow {
   priority: number;
   cooldown_until: number | null;
   last_error: string | null;
+  enabled: number;
 }
 
 function toConnection(row: ConnectionRow): Connection {
@@ -40,6 +41,7 @@ function toConnection(row: ConnectionRow): Connection {
     cooldownUntil: row.cooldown_until,
     lastError: row.last_error,
     credentialDecryptFailed,
+    enabled: row.enabled !== 0,
   };
 }
 
@@ -67,4 +69,47 @@ export function clearCooldown(id: number): void {
   getDb()
     .prepare("UPDATE connections SET cooldown_until = NULL, last_error = NULL WHERE id = ?")
     .run(id);
+}
+
+export function updateConnection(
+  id: number,
+  patch: Partial<{ label: string; apiKey: string; priority: number; enabled: boolean }>
+): void {
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  if (patch.label !== undefined) {
+    sets.push("label = ?");
+    params.push(patch.label);
+  }
+  if (patch.apiKey !== undefined) {
+    sets.push("api_key = ?");
+    params.push(encrypt(patch.apiKey));
+  }
+  if (patch.priority !== undefined) {
+    sets.push("priority = ?");
+    params.push(patch.priority);
+  }
+  if (patch.enabled !== undefined) {
+    sets.push("enabled = ?");
+    params.push(patch.enabled ? 1 : 0);
+  }
+  if (sets.length === 0) return;
+  params.push(id);
+  getDb()
+    .prepare(`UPDATE connections SET ${sets.join(", ")} WHERE id = ?`)
+    .run(...params);
+}
+
+export function deleteConnection(id: number): void {
+  getDb().prepare("DELETE FROM connections WHERE id = ?").run(id);
+}
+
+export function getConnectionByProviderAndLabel(
+  providerId: string,
+  label: string
+): Connection | null {
+  const row = getDb()
+    .prepare("SELECT * FROM connections WHERE provider_id = ? AND label = ?")
+    .get(providerId, label) as ConnectionRow | undefined;
+  return row ? toConnection(row) : null;
 }

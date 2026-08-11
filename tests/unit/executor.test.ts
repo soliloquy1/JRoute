@@ -28,6 +28,7 @@ const connection: Connection = {
   cooldownUntil: null,
   lastError: null,
   credentialDecryptFailed: false,
+  enabled: true,
 };
 
 test("classifies transient statuses as retryable", () => {
@@ -167,6 +168,7 @@ const anthropicConnection: Connection = {
   cooldownUntil: null,
   lastError: null,
   credentialDecryptFailed: false,
+  enabled: true,
 };
 
 test("anthropic requests go to /v1/messages with x-api-key and anthropic-version", async () => {
