@@ -3,7 +3,7 @@ import { verifyApiKey } from "./apiKeys.ts";
 import { verifySession, SESSION_COOKIE } from "./sessions.ts";
 import type { ApiKeyRecord } from "../db/types.ts";
 
-function readCookie(req: Request, name: string): string | null {
+export function readCookie(req: Request, name: string): string | null {
   const header = req.headers.get("cookie");
   if (!header) return null;
   for (const part of header.split(";")) {
