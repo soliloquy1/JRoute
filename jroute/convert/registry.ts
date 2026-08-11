@@ -1,5 +1,6 @@
 import { openaiConverter } from "./openai.ts";
 import { anthropicConverter } from "./anthropic/request.ts";
+import { geminiConverter } from "./gemini/request.ts";
 import type { RequestConverter } from "./types.ts";
 import type { WireFormat } from "../../src/lib/db/types.ts";
 
@@ -10,6 +11,7 @@ import type { WireFormat } from "../../src/lib/db/types.ts";
 const CONVERTERS: Partial<Record<WireFormat, RequestConverter>> = {
   openai: openaiConverter,
   anthropic: anthropicConverter,
+  gemini: geminiConverter,
 };
 
 export function getConverter(wireFormat: WireFormat): RequestConverter | null {

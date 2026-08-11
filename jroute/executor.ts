@@ -11,8 +11,12 @@ import type { Provider, Connection, WireFormat } from "../src/lib/db/types.ts";
  * baseUrl cannot reach it, which is why this indirection exists.
  */
 export interface WireDescriptor {
-  /** Appended to the provider's baseUrl (which has trailing slashes stripped). */
+  /** Appended to the provider's baseUrl (trailing slashes stripped). Used when `buildPath`
+   * is absent. */
   path: string;
+  /** Formats whose endpoint depends on the model and/or the stream flag (Gemini) supply this
+   * instead of a static `path`. When present it wins over `path`. */
+  buildPath?(ctx: { model: string; stream: boolean }): string;
   /** Auth headers for this format. Kept as a function because the header NAME differs. */
   authHeaders(apiKey: string): Record<string, string>;
   /** Always-sent extra headers, e.g. Anthropic's required API version. */
@@ -32,7 +36,15 @@ export const WIRE_DESCRIPTORS: Partial<Record<WireFormat, WireDescriptor>> = {
     authHeaders: (apiKey) => ({ "x-api-key": apiKey }),
     extraHeaders: { "anthropic-version": ANTHROPIC_VERSION },
   },
-  // gemini: Plan 2c.
+  gemini: {
+    path: "/v1beta/models", // unused (buildPath wins); kept non-empty for the type
+    buildPath: ({ model, stream }) =>
+      stream
+        ? `/v1beta/models/${model}:streamGenerateContent?alt=sse`
+        : `/v1beta/models/${model}:generateContent`,
+    authHeaders: (apiKey) => ({ "x-goog-api-key": apiKey }),
+    extraHeaders: {},
+  },
 };
 
 export function describeWire(wireFormat: WireFormat): WireDescriptor | null {
@@ -50,6 +62,13 @@ export interface ExecuteParams {
   connection: Connection;
   body: Record<string, unknown>;
   signal: AbortSignal;
+  /** Resolved upstream model id. Required only by formats whose URL embeds it (Gemini);
+   * static-path formats (openai/anthropic) ignore it. */
+  model?: string;
+  /** Whether the client requested a streaming response. Sourced from the CLIENT request body,
+   * NOT from `body` above (the converted body has `stream` stripped for Gemini). Only formats
+   * whose URL selects a streaming action (Gemini) read it. */
+  stream?: boolean;
 }
 
 export interface ExecuteResult {
@@ -177,7 +196,13 @@ export async function execute(
     };
   }
 
-  const url = `${provider.baseUrl.replace(/\/+$/, "")}${wire.path}`;
+  // The stream flag MUST come from `params.stream`, never from `body.stream` — the Gemini
+  // converter strips `stream` from the body (streaming is a URL concern there), so reading
+  // `body.stream` would always be undefined and the streaming URL would never be selected.
+  const path = wire.buildPath
+    ? wire.buildPath({ model: params.model ?? "", stream: params.stream ?? false })
+    : wire.path;
+  const url = `${provider.baseUrl.replace(/\/+$/, "")}${path}`;
 
   let res: Response;
   try {
