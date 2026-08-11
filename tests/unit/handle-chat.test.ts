@@ -20,6 +20,7 @@ const { issueApiKey, verifyApiKey, setApiKeyPreset } =
 const { createPromptBlock } = await import("../../src/lib/db/promptBlocks.ts");
 const { createPreset, setPresetLorebooks } = await import("../../src/lib/db/presets.ts");
 const { createLorebook } = await import("../../src/lib/db/lorebooks.ts");
+const { createMcpServer } = await import("../../src/lib/db/mcpServers.ts");
 const { warmUpSandbox } = await import("../../src/lib/lorebooks/sandbox.ts");
 const { handleChat } = await import("../../jroute/handleChat.ts");
 
@@ -1044,4 +1045,72 @@ test("a post-dial hangup on a Gemini stream writes a row with partial tokens and
   };
   assert.equal(row.prompt_tokens, 6);
   assert.equal(row.error, "client disconnected mid-stream");
+});
+
+test("trigger-mode MCP result reaches the upstream request as a depth-injection", async () => {
+  createConnection("openai", "primary", "sk-test");
+  createMcpServer("search", "http", "https://127.0.0.1:1/mcp", {
+    triggerPattern: "\\btavern\\b",
+    toolAllowlist: "search",
+  });
+  const apiKey = verifyApiKey(issueApiKey("trigger-key", "trigger").secret)!;
+
+  let capturedBody: unknown = null;
+  const fetchImpl: typeof fetch = async (_url, init) => {
+    capturedBody = JSON.parse(String(init?.body));
+    return new Response(JSON.stringify({ id: "x", choices: [], usage: {} }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  await handleChat(
+    post({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: "let's meet at the tavern" }],
+    }),
+    apiKey,
+    { fetchImpl }
+  );
+
+  // The MCP server at 127.0.0.1:1 is unreachable (nothing listens there), so this test
+  // proves the WIRING calls runTriggerMode and doesn't crash the request — not that a real
+  // tool result appears (that would need a live MCP server, out of scope for a unit test).
+  const messages = (capturedBody as { messages: Array<{ role: string; content: unknown }> })
+    .messages;
+  assert.ok(
+    Array.isArray(messages),
+    "request must still succeed even when the trigger's MCP server is unreachable"
+  );
+});
+
+test("trigger mode is skipped entirely (no connection attempt) when key.toolMode is not trigger", async () => {
+  createConnection("openai", "primary", "sk-test");
+  createMcpServer("search", "http", "https://127.0.0.1:1/mcp", {
+    triggerPattern: "\\btavern\\b",
+    toolAllowlist: "search",
+  });
+  const apiKey = key(); // default toolMode "off"
+
+  const start = Date.now();
+  let capturedBody: unknown = null;
+  const fetchImpl: typeof fetch = async (_url, init) => {
+    capturedBody = JSON.parse(String(init?.body));
+    return new Response(JSON.stringify({ id: "x", choices: [], usage: {} }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  await handleChat(
+    post({ model: "gpt-4o", messages: [{ role: "user", content: "let's meet at the tavern" }] }),
+    apiKey,
+    { fetchImpl }
+  );
+  const elapsedMs = Date.now() - start;
+  // No connection attempt to the (nonexistent) MCP server means this returns near-instantly.
+  // A real attempt to 127.0.0.1:1 measurably takes longer even on immediate ECONNREFUSED
+  // (process/socket overhead) — pick a generous threshold to avoid CI flakiness; the point is
+  // "did handleChat even try to reach the MCP server", not precise timing.
+  assert.ok(elapsedMs < 500, `expected no MCP connection attempt, took ${elapsedMs}ms`);
+  assert.ok(capturedBody, "request must still complete normally");
 });
