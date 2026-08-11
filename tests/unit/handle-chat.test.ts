@@ -606,30 +606,11 @@ test("usage rows record the requested model id", async () => {
   assert.equal(row.provider_id, "anthropic", "and the provider that served it");
 });
 
-test("a provider whose wireFormat has no converter is a clean 503", async () => {
-  const db = getDb();
-  db.prepare("DELETE FROM connections").run();
-  db.prepare("DELETE FROM providers").run();
-  upsertProvider({
-    id: "anthropic",
-    name: "Anthropic",
-    kind: "apikey",
-    baseUrl: "https://api.anthropic.com",
-    // Force an unsupported format through the same provider the model maps to.
-    wireFormat: "gemini",
-    enabled: true,
-  });
-  createConnection("anthropic", "primary", "sk-ant-1");
-
-  const res = await handleChat(
-    post({ model: "claude-sonnet-4-6", messages: [{ role: "user", content: "hi" }] }),
-    key(),
-    { fetchImpl: async () => new Response("{}", { status: 200 }) }
-  );
-  assert.equal(res.status, 503);
-  const body = (await res.json()) as { error: { message: string } };
-  assert.ok(body.error.message.length > 0);
-});
+// (Removed Task-6 repurposed test "a gemini-wireFormat provider threads the model into the URL
+// and passes the raw body through": its raw-passthrough assertion became false when Task 7
+// registered the gemini response converter, and its URL-threading value is already covered by
+// executor.test.ts's buildPath/execute cases. The fully-wired end-to-end gemini path is pinned
+// by the three tests below.)
 
 test("converts a non-streaming Anthropic response into OpenAI chat.completion shape", async () => {
   upsertProvider({
@@ -925,4 +906,142 @@ test("a lorebook scoped to the key's preset produces a depth-injection that reac
     (m) => typeof m.content === "string" && m.content.includes("Prancing Pony")
   );
   assert.ok(found, "lorebook depth-injection content must reach the upstream request");
+});
+
+test("converts a non-streaming Gemini response into OpenAI chat.completion shape", async () => {
+  upsertProvider({
+    id: "google",
+    name: "Google",
+    kind: "apikey",
+    baseUrl: "https://generativelanguage.googleapis.com",
+    wireFormat: "gemini",
+    enabled: true,
+  });
+  createConnection("google", "primary", "gk-1");
+  const fetchImpl: typeof fetch = async () =>
+    new Response(
+      JSON.stringify({
+        candidates: [
+          {
+            content: { role: "model", parts: [{ text: "Hello from Gemini" }] },
+            finishReason: "STOP",
+            index: 0,
+          },
+        ],
+        usageMetadata: { promptTokenCount: 20, candidatesTokenCount: 8, totalTokenCount: 28 },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+  const apiKey = key();
+  const res = await handleChat(
+    post({ model: "gemini-2.0-flash", messages: [{ role: "user", content: "hi" }] }),
+    apiKey,
+    { fetchImpl }
+  );
+  assert.equal(res.status, 200);
+  const body = (await res.json()) as {
+    object: string;
+    choices: Array<{ message: { content: string } }>;
+  };
+  assert.equal(body.object, "chat.completion");
+  assert.equal(body.choices[0].message.content, "Hello from Gemini");
+  const row = getDb().prepare("SELECT * FROM usage_logs WHERE api_key_id = ?").get(apiKey.id) as {
+    prompt_tokens: number;
+    output_tokens: number;
+  };
+  assert.equal(row.prompt_tokens, 20);
+  assert.equal(row.output_tokens, 8);
+});
+
+test("streams a converted Gemini response and defers usage logging to stream completion", async () => {
+  upsertProvider({
+    id: "google",
+    name: "Google",
+    kind: "apikey",
+    baseUrl: "https://generativelanguage.googleapis.com",
+    wireFormat: "gemini",
+    enabled: true,
+  });
+  createConnection("google", "primary", "gk-1");
+  const encoder = new TextEncoder();
+  const wire =
+    'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"hi"}]}}]}\n\n' +
+    'data: {"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":9,"candidatesTokenCount":2,"totalTokenCount":11}}\n\n';
+  const fetchImpl: typeof fetch = async () =>
+    new Response(
+      new ReadableStream({
+        start: (c) => {
+          c.enqueue(encoder.encode(wire));
+          c.close();
+        },
+      }),
+      { status: 200, headers: { "content-type": "text/event-stream" } }
+    );
+  const apiKey = key();
+  const res = await handleChat(
+    post({ model: "gemini-2.0-flash", stream: true, messages: [{ role: "user", content: "hi" }] }),
+    apiKey,
+    { fetchImpl }
+  );
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("content-type"), "text/event-stream");
+
+  const beforeDrain = getDb()
+    .prepare("SELECT * FROM usage_logs WHERE api_key_id = ?")
+    .get(apiKey.id);
+  assert.equal(beforeDrain, undefined, "usage row must not exist before the stream is consumed");
+
+  const text = await res.text();
+  assert.match(text, /"role":"assistant"/);
+  assert.match(text, /data: \[DONE\]/);
+
+  const row = getDb().prepare("SELECT * FROM usage_logs WHERE api_key_id = ?").get(apiKey.id) as {
+    prompt_tokens: number;
+    output_tokens: number;
+    error: string | null;
+  };
+  assert.equal(row.prompt_tokens, 9);
+  assert.equal(row.output_tokens, 2);
+  assert.equal(row.error, null);
+});
+
+test("a post-dial hangup on a Gemini stream writes a row with partial tokens and a distinct error", async () => {
+  upsertProvider({
+    id: "google",
+    name: "Google",
+    kind: "apikey",
+    baseUrl: "https://generativelanguage.googleapis.com",
+    wireFormat: "gemini",
+    enabled: true,
+  });
+  createConnection("google", "primary", "gk-1");
+  const encoder = new TextEncoder();
+  // A content frame carrying usageMetadata but no finishReason; source never closes.
+  const wire =
+    'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"partial"}]}}],"usageMetadata":{"promptTokenCount":6}}\n\n';
+  const fetchImpl: typeof fetch = async () =>
+    new Response(
+      new ReadableStream({
+        start: (c) => {
+          c.enqueue(encoder.encode(wire));
+        },
+      }),
+      { status: 200, headers: { "content-type": "text/event-stream" } }
+    );
+  const apiKey = key();
+  const res = await handleChat(
+    post({ model: "gemini-2.0-flash", stream: true, messages: [{ role: "user", content: "hi" }] }),
+    apiKey,
+    { fetchImpl }
+  );
+  assert.ok(res.body, "must forward a live stream to cancel");
+  const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+  await reader.read();
+  await reader.cancel("client went away");
+  const row = getDb().prepare("SELECT * FROM usage_logs WHERE api_key_id = ?").get(apiKey.id) as {
+    prompt_tokens: number;
+    error: string;
+  };
+  assert.equal(row.prompt_tokens, 6);
+  assert.equal(row.error, "client disconnected mid-stream");
 });

@@ -1,7 +1,13 @@
 // tests/unit/executor.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execute, classifyStatus, cooldownMsFor, describeWire } from "../../jroute/executor.ts";
+import {
+  execute,
+  classifyStatus,
+  cooldownMsFor,
+  describeWire,
+  WIRE_DESCRIPTORS,
+} from "../../jroute/executor.ts";
 import type { Provider, Connection } from "../../src/lib/db/types.ts";
 
 const provider: Provider = {
@@ -259,6 +265,105 @@ test("cooldownMsFor prefers an upstream retry-after hint over backoff", () => {
   assert.equal(cooldownMsFor(429, 2, null), 12000);
 });
 
-test("describeWire returns null for a format with no descriptor", () => {
-  assert.equal(describeWire("gemini"), null);
+test("describeWire returns a descriptor for every registered wire format", () => {
+  for (const fmt of ["openai", "anthropic", "gemini"] as const) {
+    assert.ok(describeWire(fmt), `${fmt} must have a descriptor`);
+  }
+});
+
+const geminiProvider: Provider = {
+  id: "google",
+  name: "Google",
+  kind: "apikey",
+  baseUrl: "https://generativelanguage.googleapis.com",
+  wireFormat: "gemini",
+  enabled: true,
+};
+
+const geminiConnection: Connection = {
+  id: 3,
+  providerId: "google",
+  label: "primary",
+  apiKey: "gk-1",
+  priority: 100,
+  cooldownUntil: null,
+  lastError: null,
+  credentialDecryptFailed: false,
+  enabled: true,
+};
+
+test("gemini buildPath produces the non-streaming generateContent URL", () => {
+  const desc = WIRE_DESCRIPTORS.gemini;
+  assert.ok(desc?.buildPath, "gemini descriptor must expose buildPath");
+  assert.equal(
+    desc.buildPath({ model: "gemini-2.0-flash", stream: false }),
+    "/v1beta/models/gemini-2.0-flash:generateContent"
+  );
+});
+
+test("gemini buildPath produces the streaming URL with alt=sse", () => {
+  const desc = WIRE_DESCRIPTORS.gemini;
+  assert.equal(
+    desc?.buildPath?.({ model: "gemini-2.0-flash", stream: true }),
+    "/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse"
+  );
+});
+
+test("gemini authHeaders use x-goog-api-key, not Bearer", () => {
+  const headers = WIRE_DESCRIPTORS.gemini?.authHeaders("KEY123");
+  assert.deepEqual(headers, { "x-goog-api-key": "KEY123" });
+});
+
+test("execute builds the NON-streaming gemini URL when params.stream is false", async () => {
+  let calledUrl = "";
+  const fetchImpl: typeof fetch = async (url) => {
+    calledUrl = String(url);
+    return new Response(JSON.stringify({ candidates: [] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const result = await execute(
+    {
+      provider: geminiProvider,
+      connection: geminiConnection,
+      // NB: no `stream` in the body — the Gemini converter strips it; the flag comes from params.
+      body: { contents: [] },
+      signal: new AbortController().signal,
+      model: "gemini-2.0-flash",
+      stream: false,
+    },
+    fetchImpl
+  );
+  assert.equal(result.ok, true);
+  assert.equal(
+    calledUrl,
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+  );
+});
+
+test("execute builds the STREAMING gemini URL when params.stream is true, NOT from body.stream", async () => {
+  let calledUrl = "";
+  const fetchImpl: typeof fetch = async (url) => {
+    calledUrl = String(url);
+    return new Response("", { status: 200, headers: { "content-type": "text/event-stream" } });
+  };
+  await execute(
+    {
+      provider: geminiProvider,
+      connection: geminiConnection,
+      // body.stream is ABSENT (converter strips it). The streaming URL must still be chosen,
+      // proving buildPath reads params.stream and not body.stream — this is the regression guard
+      // for the "streaming URL never selected" bug.
+      body: { contents: [] },
+      signal: new AbortController().signal,
+      model: "gemini-2.0-flash",
+      stream: true,
+    },
+    fetchImpl
+  );
+  assert.equal(
+    calledUrl,
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse"
+  );
 });
