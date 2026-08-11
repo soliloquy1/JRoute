@@ -72,6 +72,10 @@ export function revokeApiKey(id: number): void {
   getDb().prepare("DELETE FROM api_keys WHERE id = ?").run(id);
 }
 
+export function setApiKeyPreset(id: number, presetId: number | null): void {
+  getDb().prepare("UPDATE api_keys SET preset_id = ? WHERE id = ?").run(presetId, id);
+}
+
 export function listApiKeys(): ApiKeyRecord[] {
   const rows = getDb()
     .prepare("SELECT * FROM api_keys ORDER BY created_at DESC")

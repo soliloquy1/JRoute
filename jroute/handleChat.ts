@@ -10,6 +10,7 @@ import { resolveModel } from "./resolveModel.ts";
 import { getConverter } from "./convert/registry.ts";
 import { getResponseConverter, getStreamConverter } from "./convert/responseRegistry.ts";
 import { mapAnthropicErrorMessage } from "./convert/anthropic/errorMapping.ts";
+import { resolveSystemBlocks } from "../src/lib/prompts/assemble.ts";
 import type { ApiKeyRecord } from "../src/lib/db/types.ts";
 import type { TaggedBlock } from "./convert/types.ts";
 
@@ -34,14 +35,16 @@ export const ChatRequestSchema = z.looseObject({
 export interface HandleChatDeps {
   fetchImpl: typeof fetch;
   /**
-   * Tagged blocks from the prompt stage. Plan 2 populates only `system-block`; Plans 3-4
-   * supply real `depth-injection` producers. Injected here so the converter can be driven
-   * from tests before a producer exists.
+   * Tagged blocks from the prompt stage. When omitted, defaults to
+   * `resolveSystemBlocks(key.presetId)` (Plan 4) — real `system-block` content from the
+   * key's preset. `depth-injection` blocks have no producer yet; that is Plan 5
+   * (lorebooks) and Plan 6's trigger-mode tool results. Still overridable here so tests
+   * can inject blocks directly without touching the DB.
    */
-  blocks: TaggedBlock[];
+  blocks?: TaggedBlock[];
 }
 
-const DEFAULTS: HandleChatDeps = { fetchImpl: fetch, blocks: [] };
+const DEFAULTS: Pick<HandleChatDeps, "fetchImpl"> = { fetchImpl: fetch };
 
 interface UpstreamUsage {
   prompt_tokens?: number;
@@ -53,7 +56,8 @@ export async function handleChat(
   key: ApiKeyRecord,
   deps: Partial<HandleChatDeps> = {}
 ): Promise<Response> {
-  const { fetchImpl, blocks } = { ...DEFAULTS, ...deps };
+  const fetchImpl = deps.fetchImpl ?? DEFAULTS.fetchImpl;
+  const blocks = deps.blocks ?? resolveSystemBlocks(key.presetId);
   const startedAt = Date.now();
 
   const parsed = ChatRequestSchema.safeParse(await req.json().catch(() => null));

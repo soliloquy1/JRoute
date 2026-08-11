@@ -223,8 +223,15 @@ function hoistedSystem(
   messages: OpenAIMessage[]
 ): Array<{ type: "text"; text: string }> {
   const parts: Array<{ type: "text"; text: string }> = [];
+  const appendBlocks: TaggedBlock[] = [];
 
+  // Prepend-position blocks (any role other than "system-append", including plain
+  // "system" for backward compatibility) come first — before Janitor's own card.
   for (const b of systemBlocks) {
+    if (b.role === "system-append") {
+      appendBlocks.push(b);
+      continue;
+    }
     const text = blockToText(b.content);
     if (text.length > 0) parts.push({ type: "text", text });
   }
@@ -235,6 +242,12 @@ function hoistedSystem(
   for (const m of messages) {
     if (m.role !== "system") continue;
     const text = blockToText(m.content);
+    if (text.length > 0) parts.push({ type: "text", text });
+  }
+
+  // §6.1: append-position blocks are the last thing in the prompt.
+  for (const b of appendBlocks) {
+    const text = blockToText(b.content);
     if (text.length > 0) parts.push({ type: "text", text });
   }
 

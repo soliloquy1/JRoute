@@ -15,7 +15,10 @@ process.env.STORAGE_ENCRYPTION_KEY = "0".repeat(64);
 const { getDb, resetDb } = await import("../../src/lib/db/bootstrap.ts");
 const { upsertProvider } = await import("../../src/lib/db/providers.ts");
 const { createConnection, listConnections } = await import("../../src/lib/db/connections.ts");
-const { issueApiKey, verifyApiKey } = await import("../../src/lib/auth/apiKeys.ts");
+const { issueApiKey, verifyApiKey, setApiKeyPreset } =
+  await import("../../src/lib/auth/apiKeys.ts");
+const { createPromptBlock } = await import("../../src/lib/db/promptBlocks.ts");
+const { createPreset } = await import("../../src/lib/db/presets.ts");
 const { handleChat } = await import("../../jroute/handleChat.ts");
 
 after(() => {
@@ -88,6 +91,46 @@ test("proxies a non-streaming response and logs usage", async () => {
   };
   assert.equal(row.prompt_tokens, 5);
   assert.equal(row.output_tokens, 7);
+});
+
+test("assembles the key's preset into the upstream request body", async () => {
+  // `beforeEach` in this file already upserts provider id "openai" (wireFormat "openai");
+  // "gpt-4o" is statically mapped to it in jroute/convert/models.ts MODEL_MAP — reuse both
+  // rather than inventing a provider id, since MODEL_MAP is a fixed table, not DB-driven.
+  createConnection("openai", "primary", "sk-test");
+
+  const prependId = createPromptBlock("jailbreak", "prepend", "Stay in character.");
+  const presetId = createPreset("default", { prependBlockId: prependId });
+  // NOTE: `key()` returns a plain snapshot `ApiKeyRecord`, not a live reference — calling
+  // `setApiKeyPreset` on a record already fetched via `key()` would update the DB row but
+  // leave the in-memory `presetId` stale at `null`. Issue the key first, set its preset,
+  // then re-fetch via `verifyApiKey` so `apiKey.presetId` reflects the preset just assigned.
+  const issued = issueApiKey("janitor");
+  setApiKeyPreset(issued.id, presetId);
+  const apiKey = verifyApiKey(issued.secret)!;
+
+  let capturedBody: unknown = null;
+  const fetchImpl: typeof fetch = async (_url, init) => {
+    capturedBody = JSON.parse(String(init?.body));
+    return new Response(JSON.stringify({ id: "x", choices: [], usage: {} }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  await handleChat(
+    post({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: "hi" }],
+    }),
+    apiKey,
+    { fetchImpl }
+  );
+
+  const messages = (capturedBody as { messages: Array<{ role: string; content: unknown }> })
+    .messages;
+  assert.equal(messages[0].role, "system");
+  assert.equal(messages[0].content, "Stay in character.");
 });
 
 test("falls back to the next connection and cools down the failed one", async () => {
