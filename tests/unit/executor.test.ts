@@ -289,6 +289,7 @@ const geminiConnection: Connection = {
   cooldownUntil: null,
   lastError: null,
   credentialDecryptFailed: false,
+  enabled: true,
 };
 
 test("gemini buildPath produces the non-streaming generateContent URL", () => {

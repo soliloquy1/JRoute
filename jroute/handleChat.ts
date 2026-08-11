@@ -11,8 +11,15 @@ import { getConverter } from "./convert/registry.ts";
 import { getResponseConverter, getStreamConverter } from "./convert/responseRegistry.ts";
 import { mapAnthropicErrorMessage } from "./convert/anthropic/errorMapping.ts";
 import { resolveSystemBlocks } from "../src/lib/prompts/assemble.ts";
+import { runLorebooksForRequest } from "../src/lib/lorebooks/runner.ts";
+import { getPreset } from "../src/lib/db/presets.ts";
 import type { ApiKeyRecord } from "../src/lib/db/types.ts";
 import type { TaggedBlock } from "./convert/types.ts";
+
+function extractRawSystemPrompt(messages: Array<{ role: string; content?: unknown }>): string {
+  const systemMessage = messages.find((m) => m.role === "system");
+  return systemMessage && typeof systemMessage.content === "string" ? systemMessage.content : "";
+}
 
 // `looseObject` (not `object`) at BOTH levels. A plain `z.object` strips unknown keys,
 // and the message element is what matters: stripping there silently deletes
@@ -57,7 +64,6 @@ export async function handleChat(
   deps: Partial<HandleChatDeps> = {}
 ): Promise<Response> {
   const fetchImpl = deps.fetchImpl ?? DEFAULTS.fetchImpl;
-  const blocks = deps.blocks ?? resolveSystemBlocks(key.presetId);
   const startedAt = Date.now();
 
   const parsed = ChatRequestSchema.safeParse(await req.json().catch(() => null));
@@ -65,6 +71,24 @@ export async function handleChat(
     return jsonError(400, "Invalid request body");
   }
   const body = parsed.data as Record<string, unknown>;
+
+  const blocks =
+    deps.blocks ??
+    (() => {
+      const systemBlocks = resolveSystemBlocks(key.presetId);
+      const preset = key.presetId !== null ? getPreset(key.presetId) : null;
+      const lorebookBlocks =
+        preset && preset.lorebookIds.length > 0
+          ? runLorebooksForRequest({
+              lorebookIds: preset.lorebookIds,
+              messages: parsed.data.messages as Array<{ role: string; content: unknown }>,
+              rawSystemPrompt: extractRawSystemPrompt(
+                parsed.data.messages as Array<{ role: string; content?: unknown }>
+              ),
+            })
+          : [];
+      return [...systemBlocks, ...lorebookBlocks];
+    })();
 
   const requestedModel = String(body.model ?? "");
 

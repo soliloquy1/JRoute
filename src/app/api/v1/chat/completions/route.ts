@@ -2,6 +2,9 @@
 import { jsonError } from "@jroute/errors.ts";
 import { handleChat } from "@jroute/handleChat.ts";
 import { authenticateProxy, corsHeadersFor } from "@/lib/auth/guard.ts";
+import { warmUpSandbox } from "@/lib/lorebooks/sandbox.ts";
+
+warmUpSandbox().catch(() => {});
 
 const CORS = corsHeadersFor("/v1/chat/completions", null);
 
