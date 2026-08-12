@@ -36,8 +36,14 @@ export async function runTriggerMode(input: TriggerInput): Promise<TaggedBlock[]
     const firstAllowedName = server.toolAllowlist?.split(",")[0]?.trim();
     if (!firstAllowedName) continue;
 
+    // `client` is declared outside the try so `finally` can close it regardless of which
+    // branch below runs (success, tool-call failure, or connectMcpClient itself throwing —
+    // in the last case `client` stays undefined and `client?.close()` is a safe no-op).
+    // Without this, every trigger-mode fire leaked an open MCP connection (and, for stdio
+    // transports, a child process) for the lifetime of the server process.
+    let client: Awaited<ReturnType<typeof connectMcpClient>> | undefined;
     try {
-      const client = await connectMcpClient(server);
+      client = await connectMcpClient(server);
       const result = await client.callTool({ name: firstAllowedName, arguments: {} });
       const text = extractTextResult(result);
       if (text.length === 0) continue;
@@ -47,6 +53,8 @@ export async function runTriggerMode(input: TriggerInput): Promise<TaggedBlock[]
       // the lorebook runner's (Plan 5) precedent of isolating one bad source from failing
       // the whole request. Try the next server rather than aborting the whole trigger pass.
       continue;
+    } finally {
+      await client?.close().catch(() => {});
     }
   }
 
