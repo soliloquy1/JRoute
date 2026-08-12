@@ -9,8 +9,14 @@ const dir = mkdtempSync(join(tmpdir(), "jroute-test-"));
 process.env.DATA_DIR = dir;
 
 const { getDb, resetDb } = await import("../../src/lib/db/bootstrap.ts");
-const { logUsage, getUsageByApiKey, getUsageByProvider, getUsageSummary, getDailyRequestCounts, getRecentUsage } =
-  await import("../../src/lib/db/usageLogs.ts");
+const {
+  logUsage,
+  getUsageByApiKey,
+  getUsageByProvider,
+  getUsageSummary,
+  getDailyRequestCounts,
+  getRecentUsage,
+} = await import("../../src/lib/db/usageLogs.ts");
 
 after(() => {
   resetDb();
