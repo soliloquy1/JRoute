@@ -9,7 +9,7 @@ const dir = mkdtempSync(join(tmpdir(), "jroute-test-"));
 process.env.DATA_DIR = dir;
 
 const { getDebugLogConfigPath } = await import("../../src/lib/debugLog/config.ts");
-const { debugLog, debugLogError, debugLogFilePath } =
+const { debugLog, debugLogError, debugLogFilePath, redactHeaders } =
   await import("../../src/lib/debugLog/logger.ts");
 
 after(() => {
@@ -56,6 +56,35 @@ test("debugLog redacts a bearer token in logged data", () => {
   const headers = entry?.headers as { authorization: string };
   assert.ok(!headers.authorization.includes("sk-abcdefghijklmnopqrstuvwx"));
   assert.match(headers.authorization, /REDACTED/);
+});
+
+test("redactHeaders masks x-api-key by key name, even though its jr- shape matches no content pattern", () => {
+  // The bug this guards: logRedaction.ts redacts by VALUE content ("Bearer ...", "sk-...")
+  // and has no way to see a header's KEY name. A live jroute proxy key (format
+  // "jr-<64 hex chars>", src/lib/auth/apiKeys.ts) authenticated via the x-api-key header
+  // matches none of logRedaction's content patterns, so it passed through untouched before
+  // this fix — a real credential leak into a log designed to be pasted to a third party.
+  const raw = {
+    "x-api-key": "jr-90ec158ea4df705b3a75522d0e24e983c655b76267b45ec42c89e62fe4e3f378",
+    "content-type": "application/json",
+  };
+  const redacted = redactHeaders(raw);
+  assert.equal(redacted["x-api-key"], "[REDACTED]");
+  assert.equal(redacted["content-type"], "application/json", "non-sensitive headers pass through");
+});
+
+test("debugLog never leaks a raw x-api-key value end-to-end through request-shaped logging", () => {
+  debugLog("request.received", {
+    requestId: "req-xapikey",
+    headers: redactHeaders({
+      "x-api-key": "jr-90ec158ea4df705b3a75522d0e24e983c655b76267b45ec42c89e62fe4e3f378",
+    }),
+  });
+  const lines = readLoggedLines();
+  const entry = lines.find((l) => l.requestId === "req-xapikey");
+  assert.ok(entry);
+  const headers = entry?.headers as { "x-api-key": string };
+  assert.equal(headers["x-api-key"], "[REDACTED]");
 });
 
 test("debugLogError logs a real Error with a redacted message/stack and never throws", () => {

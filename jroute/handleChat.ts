@@ -14,7 +14,7 @@ import { resolveSystemBlocks } from "../src/lib/prompts/assemble.ts";
 import { runLorebooksForRequest } from "../src/lib/lorebooks/runner.ts";
 import { getPreset } from "../src/lib/db/presets.ts";
 import { runTriggerMode } from "../src/lib/mcp/trigger.ts";
-import { debugLog, debugLogError } from "../src/lib/debugLog/logger.ts";
+import { debugLog, debugLogError, redactHeaders } from "../src/lib/debugLog/logger.ts";
 import type { ApiKeyRecord } from "../src/lib/db/types.ts";
 import type { TaggedBlock } from "./convert/types.ts";
 
@@ -86,7 +86,7 @@ export async function handleChat(
     requestId,
     method: req.method,
     url: req.url,
-    headers: Object.fromEntries(req.headers.entries()),
+    headers: redactHeaders(Object.fromEntries(req.headers.entries())),
     apiKeyId: key.id,
     toolMode: key.toolMode,
   });

@@ -16,6 +16,30 @@ export function debugLogFilePath(): string {
   return join(dataDir(), "debug.log");
 }
 
+// logRedaction.ts redacts by VALUE content (patterns like "Bearer <token>", "sk-...") —
+// it has no way to know a header's KEY name, so a credential whose shape doesn't match any
+// of those patterns passes through untouched. This bit us for real: a client authenticating
+// via `x-api-key: jr-<64 hex chars>` (src/lib/auth/apiKeys.ts's own key format) logged its
+// raw, live proxy credential in request.received, because "jr-..." matches none of
+// logRedaction's patterns (they're tuned for provider keys like "sk-...", not this app's
+// own). Redact these specific header keys by name, unconditionally, before the value ever
+// reaches logRedaction's content-based pass — defense in depth, not a replacement for it.
+const SENSITIVE_HEADER_KEYS = new Set([
+  "authorization",
+  "x-api-key",
+  "x-goog-api-key",
+  "cookie",
+  "set-cookie",
+]);
+
+export function redactHeaders(headers: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    out[key] = SENSITIVE_HEADER_KEYS.has(key.toLowerCase()) ? "[REDACTED]" : value;
+  }
+  return out;
+}
+
 // Deliberately NOT pino here (unlike src/shared/utils/logger.ts): pino's async file
 // destination (pino.destination/pino.transport) registers a process-exit auto-flush hook
 // that crashes (`sonic boom is not ready yet`) if the destination directory disappears
@@ -24,14 +48,29 @@ export function debugLogFilePath(): string {
 // runs). A plain synchronous `appendFileSync` per line has no background worker, no
 // exit hook, and no dangling file-handle state to crash on — any write failure surfaces
 // immediately, inline, inside this function's own try/catch.
+// A single request touches this log ~9 times, so re-`stat`-ing on every write would be
+// wasteful — but checking only ONCE per process lifetime (the first write-after-boot)
+// means a long-running server's debug log grows past MAX_FILE_SIZE forever afterward,
+// since this module has no background rotation timer the way the main app logger does
+// (src/lib/logRotation.ts's own timer only watches its own APP_LOG_FILE_PATH). Re-check
+// every ROTATION_CHECK_INTERVAL writes instead of only once-ever — cheap enough (a `stat`
+// call) to run this often, and bounds the growth window to a fixed number of log lines
+// rather than "forever after boot."
+const ROTATION_CHECK_INTERVAL = 200;
 let rotationCheckedForPath: string | null = null;
+let writesSinceRotationCheck = 0;
 
 function ensureRotation(path: string): void {
-  if (rotationCheckedForPath === path) return;
+  const pathChanged = rotationCheckedForPath !== path;
+  if (!pathChanged && writesSinceRotationCheck < ROTATION_CHECK_INTERVAL) {
+    writesSinceRotationCheck += 1;
+    return;
+  }
   ensureLogDir(path);
   rotateIfNeeded(path, MAX_FILE_SIZE);
   cleanupOverflowLogs(path, MAX_ROTATED_FILES);
   rotationCheckedForPath = path;
+  writesSinceRotationCheck = 0;
 }
 
 function writeLine(level: "info" | "error", category: string, data: Record<string, unknown>): void {
