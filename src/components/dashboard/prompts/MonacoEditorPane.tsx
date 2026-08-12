@@ -1,7 +1,7 @@
 // src/components/dashboard/prompts/MonacoEditorPane.tsx
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import * as monaco from "monaco-editor";
 import Editor, { loader } from "@monaco-editor/react";
@@ -37,17 +37,9 @@ export function MonacoEditorPane({
     selection.kind === "lorebook" ? (selection.item?.enabled ?? true) : true
   );
 
-  useEffect(() => {
-    setName(selection.item?.name ?? "");
-    setContent(
-      selection.kind === "block" ? (selection.item?.content ?? "") : (selection.item?.source ?? "")
-    );
-    if (selection.kind === "block") setBlockKind(selection.item?.kind ?? "prepend");
-    if (selection.kind === "lorebook") {
-      setScope(selection.item?.scope ?? "character");
-      setEnabled(selection.item?.enabled ?? true);
-    }
-  }, [selection]);
+  // Selection changes reset this pane's state via a `key` prop at the call site
+  // (PromptsEditor) — remount-on-change instead of a setState-in-effect, which this
+  // repo's lint config (react-hooks/set-state-in-effect) rejects as an error.
 
   async function save() {
     if (selection.kind === "block") {
