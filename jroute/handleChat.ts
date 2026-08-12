@@ -13,12 +13,22 @@ import { mapAnthropicErrorMessage } from "./convert/anthropic/errorMapping.ts";
 import { resolveSystemBlocks } from "../src/lib/prompts/assemble.ts";
 import { runLorebooksForRequest } from "../src/lib/lorebooks/runner.ts";
 import { getPreset } from "../src/lib/db/presets.ts";
+import { runTriggerMode } from "../src/lib/mcp/trigger.ts";
 import type { ApiKeyRecord } from "../src/lib/db/types.ts";
 import type { TaggedBlock } from "./convert/types.ts";
 
 function extractRawSystemPrompt(messages: Array<{ role: string; content?: unknown }>): string {
   const systemMessage = messages.find((m) => m.role === "system");
   return systemMessage && typeof systemMessage.content === "string" ? systemMessage.content : "";
+}
+
+function extractLastUserMessage(messages: Array<{ role: string; content?: unknown }>): string {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i].role === "user" && typeof messages[i].content === "string") {
+      return messages[i].content as string;
+    }
+  }
+  return "";
 }
 
 // `looseObject` (not `object`) at BOTH levels. A plain `z.object` strips unknown keys,
@@ -74,7 +84,7 @@ export async function handleChat(
 
   const blocks =
     deps.blocks ??
-    (() => {
+    (await (async () => {
       const systemBlocks = resolveSystemBlocks(key.presetId);
       const preset = key.presetId !== null ? getPreset(key.presetId) : null;
       const lorebookBlocks =
@@ -87,8 +97,16 @@ export async function handleChat(
               ),
             })
           : [];
-      return [...systemBlocks, ...lorebookBlocks];
-    })();
+      const triggerBlocks =
+        key.toolMode === "trigger"
+          ? await runTriggerMode({
+              lastUserMessage: extractLastUserMessage(
+                parsed.data.messages as Array<{ role: string; content?: unknown }>
+              ),
+            })
+          : [];
+      return [...systemBlocks, ...lorebookBlocks, ...triggerBlocks];
+    })());
 
   const requestedModel = String(body.model ?? "");
 

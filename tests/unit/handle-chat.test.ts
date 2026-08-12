@@ -4,7 +4,16 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { register } from "node:module";
 import type { TaggedBlock } from "../../jroute/convert/types.ts";
+
+// Module-hook spy for the trigger-mode gate mutation test below (see the loader file for the
+// full rationale — short version: node:test's `mock.module()` needs a CLI flag this repo's
+// test commands don't pass, so this is the flag-free equivalent). Must be registered before
+// `jroute/handleChat.ts` (which imports `src/lib/mcp/trigger.ts`) is ever imported below.
+register("./support/triggerModeSpyLoader.mjs", import.meta.url);
+
+type SpyGlobal = typeof globalThis & { __runTriggerModeCallCount?: number };
 
 const dir = mkdtempSync(join(tmpdir(), "jroute-test-"));
 process.env.DATA_DIR = dir;
@@ -20,6 +29,7 @@ const { issueApiKey, verifyApiKey, setApiKeyPreset } =
 const { createPromptBlock } = await import("../../src/lib/db/promptBlocks.ts");
 const { createPreset, setPresetLorebooks } = await import("../../src/lib/db/presets.ts");
 const { createLorebook } = await import("../../src/lib/db/lorebooks.ts");
+const { createMcpServer } = await import("../../src/lib/db/mcpServers.ts");
 const { warmUpSandbox } = await import("../../src/lib/lorebooks/sandbox.ts");
 const { handleChat } = await import("../../jroute/handleChat.ts");
 
@@ -1044,4 +1054,105 @@ test("a post-dial hangup on a Gemini stream writes a row with partial tokens and
   };
   assert.equal(row.prompt_tokens, 6);
   assert.equal(row.error, "client disconnected mid-stream");
+});
+
+test("trigger-mode MCP result reaches the upstream request as a depth-injection", async () => {
+  createConnection("openai", "primary", "sk-test");
+  createMcpServer("search", "http", "https://127.0.0.1:1/mcp", {
+    triggerPattern: "\\btavern\\b",
+    toolAllowlist: "search",
+  });
+  const apiKey = verifyApiKey(issueApiKey("trigger-key", "trigger").secret)!;
+
+  let capturedBody: unknown = null;
+  const fetchImpl: typeof fetch = async (_url, init) => {
+    capturedBody = JSON.parse(String(init?.body));
+    return new Response(JSON.stringify({ id: "x", choices: [], usage: {} }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  await handleChat(
+    post({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: "let's meet at the tavern" }],
+    }),
+    apiKey,
+    { fetchImpl }
+  );
+
+  // The MCP server at 127.0.0.1:1 is unreachable (nothing listens there), so this test
+  // proves the WIRING calls runTriggerMode and doesn't crash the request — not that a real
+  // tool result appears (that would need a live MCP server, out of scope for a unit test).
+  const messages = (capturedBody as { messages: Array<{ role: string; content: unknown }> })
+    .messages;
+  assert.ok(
+    Array.isArray(messages),
+    "request must still succeed even when the trigger's MCP server is unreachable"
+  );
+});
+
+// Mutation-bar guard for the trigger-mode gate (`key.toolMode === "trigger"` at
+// jroute/handleChat.ts:101). The previous version of this test asserted a wall-clock timing
+// threshold ("connecting to an unreachable MCP server should be slow when the gate is on,
+// fast when off"), which gave NO real regression protection: Task 2's SSRF filter
+// (src/lib/mcp/ssrfFetch.ts) rejects loopback targets SYNCHRONOUSLY before any network attempt,
+// so both the gate-on and gate-off paths reject equally fast — the timing assertion could not
+// have distinguished a broken/inverted gate from a working one. These two tests instead spy
+// directly on `runTriggerMode` (via tests/unit/support/triggerModeSpyLoader.mjs, a flag-free
+// module-hook stand-in for node:test's `mock.module()`) and assert its call COUNT, which is
+// exactly the signal a broken gate would flip.
+test("toolMode: trigger calls runTriggerMode exactly once", async () => {
+  createConnection("openai", "primary", "sk-test");
+  createMcpServer("search", "http", "https://127.0.0.1:1/mcp", {
+    triggerPattern: "\\btavern\\b",
+    toolAllowlist: "search",
+  });
+  (globalThis as SpyGlobal).__runTriggerModeCallCount = 0;
+  const apiKey = verifyApiKey(issueApiKey("trigger-key", "trigger").secret)!;
+
+  const fetchImpl: typeof fetch = async () =>
+    new Response(JSON.stringify({ id: "x", choices: [], usage: {} }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  const res = await handleChat(
+    post({ model: "gpt-4o", messages: [{ role: "user", content: "let's meet at the tavern" }] }),
+    apiKey,
+    { fetchImpl }
+  );
+  assert.equal(res.status, 200, "request must still complete normally");
+  assert.equal(
+    (globalThis as SpyGlobal).__runTriggerModeCallCount,
+    1,
+    "runTriggerMode must be called exactly once when key.toolMode is 'trigger'"
+  );
+});
+
+test("toolMode: off (default) never calls runTriggerMode", async () => {
+  createConnection("openai", "primary", "sk-test");
+  createMcpServer("search", "http", "https://127.0.0.1:1/mcp", {
+    triggerPattern: "\\btavern\\b",
+    toolAllowlist: "search",
+  });
+  (globalThis as SpyGlobal).__runTriggerModeCallCount = 0;
+  const apiKey = key(); // default toolMode "off"
+
+  const fetchImpl: typeof fetch = async () =>
+    new Response(JSON.stringify({ id: "x", choices: [], usage: {} }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  const res = await handleChat(
+    post({ model: "gpt-4o", messages: [{ role: "user", content: "let's meet at the tavern" }] }),
+    apiKey,
+    { fetchImpl }
+  );
+  assert.equal(res.status, 200, "request must still complete normally");
+  assert.equal(
+    (globalThis as SpyGlobal).__runTriggerModeCallCount,
+    0,
+    "runTriggerMode must never be called when key.toolMode is not 'trigger'"
+  );
 });
