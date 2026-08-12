@@ -18,4 +18,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { label: "Request log", href: "/keys#log" },
     ],
   },
+  {
+    group: "PROMPTS & LOREBOOKS",
+    items: [{ label: "Editor", href: "/prompts" }],
+  },
 ];
