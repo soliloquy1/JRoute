@@ -3,6 +3,7 @@ import { jsonError } from "@jroute/errors.ts";
 import { handleChat } from "@jroute/handleChat.ts";
 import { authenticateProxy, corsHeadersFor } from "@/lib/auth/guard.ts";
 import { warmUpSandbox } from "@/lib/lorebooks/sandbox.ts";
+import { debugLogError } from "@/lib/debugLog/logger.ts";
 
 warmUpSandbox().catch(() => {});
 
@@ -29,6 +30,7 @@ export async function POST(req: Request): Promise<Response> {
     // and a dev build renders a stack into it. Log server-side (never swallow silently),
     // return a sanitized 500 that still carries CORS.
     console.error("[chat] unhandled error from handleChat:", err);
+    debugLogError("request.unhandled_exception", err);
     return jsonError(500, "Internal error", CORS);
   }
 }

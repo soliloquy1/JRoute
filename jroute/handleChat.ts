@@ -14,8 +14,13 @@ import { resolveSystemBlocks } from "../src/lib/prompts/assemble.ts";
 import { runLorebooksForRequest } from "../src/lib/lorebooks/runner.ts";
 import { getPreset } from "../src/lib/db/presets.ts";
 import { runTriggerMode } from "../src/lib/mcp/trigger.ts";
+import { debugLog, debugLogError } from "../src/lib/debugLog/logger.ts";
 import type { ApiKeyRecord } from "../src/lib/db/types.ts";
 import type { TaggedBlock } from "./convert/types.ts";
+
+function newRequestId(): string {
+  return Math.random().toString(36).slice(2, 10);
+}
 
 function extractRawSystemPrompt(messages: Array<{ role: string; content?: unknown }>): string {
   const systemMessage = messages.find((m) => m.role === "system");
@@ -75,12 +80,25 @@ export async function handleChat(
 ): Promise<Response> {
   const fetchImpl = deps.fetchImpl ?? DEFAULTS.fetchImpl;
   const startedAt = Date.now();
+  const requestId = newRequestId();
 
-  const parsed = ChatRequestSchema.safeParse(await req.json().catch(() => null));
+  debugLog("request.received", {
+    requestId,
+    method: req.method,
+    url: req.url,
+    headers: Object.fromEntries(req.headers.entries()),
+    apiKeyId: key.id,
+    toolMode: key.toolMode,
+  });
+
+  const rawBody = await req.json().catch(() => null);
+  const parsed = ChatRequestSchema.safeParse(rawBody);
   if (!parsed.success) {
+    debugLog("request.invalid_body", { requestId, rawBody, issues: parsed.error.issues });
     return jsonError(400, "Invalid request body");
   }
   const body = parsed.data as Record<string, unknown>;
+  debugLog("request.parsed", { requestId, body });
 
   const blocks =
     deps.blocks ??
@@ -107,6 +125,7 @@ export async function handleChat(
           : [];
       return [...systemBlocks, ...lorebookBlocks, ...triggerBlocks];
     })());
+  debugLog("blocks.assembled", { requestId, blocks });
 
   const requestedModel = String(body.model ?? "");
 
@@ -115,17 +134,32 @@ export async function handleChat(
   // the two 503s below, which are operator misconfigurations.
   const resolved = resolveModel(requestedModel);
   if (!resolved) {
+    debugLog("model.unknown", { requestId, requestedModel });
     return jsonError(404, `Unknown model: ${requestedModel}`);
   }
   const provider = resolved.provider;
   const providerId = provider.id;
+  debugLog("model.resolved", {
+    requestId,
+    requestedModel,
+    providerId,
+    wireFormat: provider.wireFormat,
+    maxTokens: resolved.maxTokens,
+  });
 
   const converter = getConverter(provider.wireFormat);
   if (!converter) {
+    debugLog("converter.missing", { requestId, wireFormat: provider.wireFormat });
     return jsonError(503, `No converter for wire format: ${provider.wireFormat}`);
   }
 
   const candidates = eligibleConnections(listConnections(providerId), Date.now());
+  debugLog("connections.eligible", {
+    requestId,
+    providerId,
+    candidateCount: candidates.length,
+    candidateIds: candidates.map((c) => c.id),
+  });
   if (candidates.length === 0) {
     return jsonError(503, "No available connection");
   }
@@ -140,6 +174,7 @@ export async function handleChat(
     body,
     blocks,
   });
+  debugLog("request.converted", { requestId, wireFormat: provider.wireFormat, upstreamBody });
 
   // A real upstream attempt and a skipped-before-dialling connection are tracked
   // SEPARATELY. Sharing one `lastMessage` let a decrypt-failed connection sitting
@@ -162,8 +197,17 @@ export async function handleChat(
     // distinct "could not be decrypted" reason rather than a generic upstream failure.
     if (connection.credentialDecryptFailed) {
       skippedDecryptFailed = true;
+      debugLog("connection.skipped_decrypt_failed", { requestId, connectionId: connection.id });
       continue;
     }
+
+    debugLog("upstream.attempt", {
+      requestId,
+      attempt,
+      connectionId: connection.id,
+      connectionLabel: connection.label,
+      providerId,
+    });
 
     const result = await execute(
       {
@@ -181,6 +225,17 @@ export async function handleChat(
       fetchImpl
     );
 
+    debugLog("upstream.result", {
+      requestId,
+      attempt,
+      connectionId: connection.id,
+      ok: result.ok,
+      status: result.status,
+      errorMessage: result.errorMessage,
+      retryable: result.retryable,
+      isStream: result.stream !== null,
+    });
+
     // Operator addition A: honor the client-hangup contract.
     // Executor signals an abort as status === 0 AND errorMessage === null.
     // A genuine transport failure is status === 0 with a non-null errorMessage and
@@ -188,6 +243,7 @@ export async function handleChat(
     // error (it would corrupt dashboard error stats), must NOT cool down the connection
     // (the upstream may be perfectly healthy), and must NOT fail over.
     if (result.status === 0 && result.errorMessage === null) {
+      debugLog("request.client_aborted", { requestId, attempt, connectionId: connection.id });
       return new Response(null, { status: 499 });
     }
 
@@ -211,6 +267,12 @@ export async function handleChat(
             toolRounds: 0,
             error: null,
           });
+          debugLog("response.success", {
+            requestId,
+            connectionId: connection.id,
+            stream: true,
+            wireFormat: provider.wireFormat,
+          });
           return new Response(keepaliveStream(result.stream), {
             status: 200,
             headers: sseHeaders(),
@@ -228,6 +290,13 @@ export async function handleChat(
               : completion.reason === "client-hangup"
                 ? "client disconnected mid-stream"
                 : "upstream connection closed unexpectedly";
+          debugLog("response.stream_completed", {
+            requestId,
+            connectionId: connection.id,
+            reason: completion.reason,
+            promptTokens: completion.promptTokens,
+            outputTokens: completion.outputTokens,
+          });
           logUsage({
             apiKeyId: key.id,
             providerId,
@@ -240,6 +309,12 @@ export async function handleChat(
             error,
           });
         });
+        debugLog("response.success", {
+          requestId,
+          connectionId: connection.id,
+          stream: true,
+          wireFormat: provider.wireFormat,
+        });
         return new Response(keepaliveStream(wrapped), { status: 200, headers: sseHeaders() });
       }
 
@@ -248,6 +323,13 @@ export async function handleChat(
         ? responseConverter.convertResponse(result.json, requestedModel)
         : result.json;
       const usage = (outJson as { usage?: UpstreamUsage } | null)?.usage;
+      debugLog("response.success", {
+        requestId,
+        connectionId: connection.id,
+        stream: false,
+        wireFormat: provider.wireFormat,
+        outJson,
+      });
       logUsage({
         apiKeyId: key.id,
         providerId,
@@ -294,6 +376,13 @@ export async function handleChat(
       ? mapAnthropicErrorMessage(rawFailureMessage)
       : rawFailureMessage;
 
+  debugLog("response.failure", {
+    requestId,
+    failureStatus,
+    failureMessage,
+    lastConnectionId,
+    skippedDecryptFailed,
+  });
   logUsage({
     apiKeyId: key.id,
     providerId,
