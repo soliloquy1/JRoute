@@ -1,7 +1,7 @@
 // src/components/dashboard/ConnectionList.tsx
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
   DndContext,
@@ -41,6 +41,11 @@ function SortableRow({ connection, healthy }: ConnectionListItem) {
 export function ConnectionList({ items: initialItems }: { items: ConnectionListItem[] }) {
   const router = useRouter();
   const [items, setItems] = useState(initialItems);
+
+  useEffect(() => {
+    setItems(initialItems);
+  }, [initialItems]);
+
   const sensors = useSensors(useSensor(PointerSensor));
 
   async function onDragEnd(event: DragEndEvent) {
