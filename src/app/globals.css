@@ -6,7 +6,6 @@
    The bundled @font-face uses family "Material Symbols Outlined", matching the
    .material-symbols-outlined rule defined later in this file. */
 @import "material-symbols/outlined.css";
-@source "../../node_modules/fumadocs-ui/css/generated/*.css";
 
 /* Tailwind v4 auto-detection cannot scan directories with parentheses
    (e.g. Next.js route groups like "(dashboard)"). Explicit @source
