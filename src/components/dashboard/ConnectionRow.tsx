@@ -1,6 +1,7 @@
 // src/components/dashboard/ConnectionRow.tsx
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Connection } from "@/lib/db/types.ts";
 
@@ -12,9 +13,21 @@ export function ConnectionRow({
   healthy: boolean;
 }) {
   const router = useRouter();
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<string | null>(null);
 
   async function remove() {
     await fetch(`/api/connections/${connection.id}`, { method: "DELETE" });
+    router.refresh();
+  }
+
+  async function runTest() {
+    setTesting(true);
+    setTestResult(null);
+    const res = await fetch(`/api/connections/${connection.id}/test`, { method: "POST" });
+    const body = (await res.json()) as { ok: boolean; error: string | null };
+    setTesting(false);
+    setTestResult(body.ok ? "OK" : (body.error ?? "Failed"));
     router.refresh();
   }
 
@@ -27,9 +40,19 @@ export function ConnectionRow({
           <span className="text-xs text-error">(key undecryptable)</span>
         )}
       </div>
-      <button onClick={remove} className="text-xs text-error hover:underline">
-        Remove
-      </button>
+      <div className="flex items-center gap-3">
+        {testResult && <span className="text-xs text-text-muted">{testResult}</span>}
+        <button
+          onClick={runTest}
+          disabled={testing}
+          className="text-xs text-accent hover:underline disabled:opacity-50"
+        >
+          {testing ? "Testing…" : "Test"}
+        </button>
+        <button onClick={remove} className="text-xs text-error hover:underline">
+          Remove
+        </button>
+      </div>
     </div>
   );
 }
