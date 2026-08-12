@@ -3,6 +3,7 @@ import { z } from "zod";
 import { authenticateDashboard } from "@/lib/auth/guard.ts";
 import { jsonError } from "@jroute/errors.ts";
 import { buildPreview } from "@/lib/dashboard/preview.ts";
+import { warmUpSandbox } from "@/lib/lorebooks/sandbox.ts";
 
 const PreviewSchema = z.object({
   presetId: z.number().int(),
@@ -14,6 +15,12 @@ export async function POST(req: Request): Promise<Response> {
   try {
     const parsed = PreviewSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return jsonError(400, "Invalid request body");
+    // buildPreview runs real lorebooks through the QuickJS sandbox, which is inert until
+    // warmed (runLorebook returns kind:"error" cold and the runner silently skips the
+    // lorebook). The only other warm-up call site is the chat route's module side effect,
+    // so a dashboard-only session would otherwise render previews with every lorebook
+    // silently missing. Memoized after the first call — cheap on subsequent requests.
+    await warmUpSandbox();
     const result = buildPreview(parsed.data.presetId, parsed.data.wireFormat);
     if (!result) {
       return jsonError(
