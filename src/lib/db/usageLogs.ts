@@ -135,3 +135,10 @@ export function getDailyRequestCounts(sinceMs: number): DailyCount[] {
     )
     .all(sinceMs) as DailyCount[];
 }
+
+export function getRecentUsage(limit = 50, offset = 0): UsageLogRow[] {
+  const rows = getDb()
+    .prepare("SELECT * FROM usage_logs ORDER BY created_at DESC LIMIT ? OFFSET ?")
+    .all(limit, offset) as UsageLogDbRow[];
+  return rows.map(toRow);
+}

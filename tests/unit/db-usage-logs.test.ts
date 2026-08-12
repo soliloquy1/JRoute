@@ -9,7 +9,7 @@ const dir = mkdtempSync(join(tmpdir(), "jroute-test-"));
 process.env.DATA_DIR = dir;
 
 const { getDb, resetDb } = await import("../../src/lib/db/bootstrap.ts");
-const { logUsage, getUsageByApiKey, getUsageByProvider, getUsageSummary, getDailyRequestCounts } =
+const { logUsage, getUsageByApiKey, getUsageByProvider, getUsageSummary, getDailyRequestCounts, getRecentUsage } =
   await import("../../src/lib/db/usageLogs.ts");
 
 after(() => {
@@ -192,4 +192,15 @@ test("getDailyRequestCounts excludes rows before the cutoff", () => {
 
   const rows = getDailyRequestCounts(Date.UTC(2026, 0, 1, 0));
   assert.deepEqual(rows, [{ day: "2026-01-05", count: 1 }]);
+});
+
+test("getRecentUsage returns the most recent rows first, across all keys", () => {
+  insertLog(Date.UTC(2026, 0, 1, 0));
+  insertLog(Date.UTC(2026, 0, 2, 0));
+  insertLog(Date.UTC(2026, 0, 3, 0));
+
+  const rows = getRecentUsage(2);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].createdAt, Date.UTC(2026, 0, 3, 0));
+  assert.equal(rows[1].createdAt, Date.UTC(2026, 0, 2, 0));
 });
