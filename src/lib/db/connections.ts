@@ -100,8 +100,23 @@ export function updateConnection(
     .run(...params);
 }
 
+export function reorderConnections(orderedIds: number[]): void {
+  const db = getDb();
+  const setPriority = db.prepare("UPDATE connections SET priority = ? WHERE id = ?");
+  const applyAll = db.transaction((ids: number[]) => {
+    ids.forEach((id, index) => setPriority.run(index, id));
+  });
+  applyAll(orderedIds);
+}
+
 export function deleteConnection(id: number): void {
   getDb().prepare("DELETE FROM connections WHERE id = ?").run(id);
+}
+
+export function getConnectionById(id: number): Connection | null {
+  const row = getDb().prepare("SELECT * FROM connections WHERE id = ?").get(id) as
+    ConnectionRow | undefined;
+  return row ? toConnection(row) : null;
 }
 
 export function getConnectionByProviderAndLabel(
