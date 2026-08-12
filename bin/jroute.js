@@ -7,14 +7,16 @@
 // globally (`npm install -g jroute` or `npm link`), not just from inside the checkout.
 //
 // `start` does NOT use `next start`. next.config.mjs sets `output: "standalone"`, and
-// `next start` explicitly does not support that mode — it starts (misleadingly, with only
-// a warning, not an error) but serves a broken app: static chunks 404 and routes that read
-// build-time output manifests fail (`/healthz` returns 503 with `next start` against a
-// standalone build; confirmed directly, not from the Next.js docs alone). The correct way
-// to run a standalone build is `node <distDir>/standalone/server.js`, which is a
-// self-contained server bundle — but `next build` does not copy `public/` or the built
-// static assets into that bundle for you (a known, deliberate Next.js behavior, not a bug);
-// `ensureStandaloneAssets()` below does that copy, idempotently, before every `start`.
+// `next start` prints a warning that it does not support that mode — it still boots and
+// serves correctly (verified directly: with src/instrumentation.ts in place, `/healthz`
+// and static assets both work fine under plain `next start` too; the 503/404s seen while
+// building this were the missing instrumentation hook, not a `next start` defect). Running
+// the standalone bundle directly avoids that warning and is the mode `output: "standalone"`
+// is actually meant for — but doing so needs two things `next build` does not do for you:
+// `next build` does not copy `public/` or the built static assets into the standalone
+// bundle (a known, deliberate Next.js behavior, not a bug) — `ensureStandaloneAssets()`
+// below does that copy, idempotently, before every `start`. See its sibling comment for
+// the second thing (the CommonJS/ESM server.js issue).
 import { spawn, spawnSync } from "node:child_process";
 import { cpSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -35,6 +37,7 @@ const standaloneDir = join(distDir, "standalone");
 // `.cjs` extension forces CommonJS resolution regardless of the sibling package.json.
 const standaloneServer = join(standaloneDir, "server.cjs");
 const standaloneServerSrc = join(standaloneDir, "server.js");
+const DEFAULT_PORT = "20128";
 
 const [rawCommand, ...rest] = process.argv.slice(2);
 const knownCommands = new Set(["start", "dev", "build"]);
@@ -43,7 +46,7 @@ const passthroughArgs = knownCommands.has(rawCommand) ? rest : process.argv.slic
 
 function runNext(nextArgs) {
   const env = { ...process.env };
-  if (!env.PORT) env.PORT = "20128";
+  if (!env.PORT) env.PORT = DEFAULT_PORT;
   const child = spawn(nextBin, nextArgs, { cwd: packageRoot, stdio: "inherit", env });
   child.on("exit", (code, signal) => {
     if (signal) process.kill(process.pid, signal);
@@ -86,7 +89,7 @@ function ensureStandaloneAssets() {
 
 function runStandaloneServer() {
   const env = { ...process.env };
-  if (!env.PORT) env.PORT = "20128";
+  if (!env.PORT) env.PORT = DEFAULT_PORT;
   const child = spawn(process.execPath, [standaloneServer], {
     cwd: packageRoot,
     stdio: "inherit",
