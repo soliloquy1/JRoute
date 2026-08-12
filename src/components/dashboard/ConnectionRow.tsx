@@ -17,7 +17,12 @@ export function ConnectionRow({
   const [testResult, setTestResult] = useState<string | null>(null);
 
   async function remove() {
-    await fetch(`/api/connections/${connection.id}`, { method: "DELETE" });
+    if (!window.confirm("Remove this connection?")) return;
+    const res = await fetch(`/api/connections/${connection.id}`, { method: "DELETE" });
+    if (!res.ok) {
+      console.error("Failed to remove connection", connection.id);
+      return;
+    }
     router.refresh();
   }
 

@@ -12,11 +12,15 @@ export function AddConnectionForm({ providerId }: { providerId: string }) {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    await fetch("/api/connections", {
+    const res = await fetch("/api/connections", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ providerId, label, apiKey }),
     });
+    if (!res.ok) {
+      console.error("Failed to add connection", providerId, label);
+      return;
+    }
     setOpen(false);
     setLabel("");
     setApiKey("");

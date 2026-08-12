@@ -12,14 +12,20 @@ export function GenerateKeyDialog() {
   const [label, setLabel] = useState("");
   const [toolMode, setToolMode] = useState<(typeof TOOL_MODES)[number]>("off");
   const [secret, setSecret] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setError(null);
     const res = await fetch("/api/keys", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ label, toolMode }),
     });
+    if (!res.ok) {
+      setError("Failed to generate key. Please try again.");
+      return;
+    }
     const body = (await res.json()) as { secret: string };
     setSecret(body.secret);
     router.refresh();
@@ -28,6 +34,7 @@ export function GenerateKeyDialog() {
   function close() {
     setOpen(false);
     setSecret(null);
+    setError(null);
     setLabel("");
   }
 
@@ -45,9 +52,7 @@ export function GenerateKeyDialog() {
   if (secret) {
     return (
       <div className="rounded-card border border-border bg-card p-4">
-        <p className="mb-2 text-sm text-text-main">
-          Copy this now — it will not be shown again:
-        </p>
+        <p className="mb-2 text-sm text-text-main">Copy this now — it will not be shown again:</p>
         <code className="block break-all rounded-control bg-bg-subtle p-2 text-xs text-text-main">
           {secret}
         </code>
@@ -83,6 +88,7 @@ export function GenerateKeyDialog() {
           </option>
         ))}
       </select>
+      {error && <p className="text-xs text-error">{error}</p>}
       <div className="flex gap-2">
         <button
           type="submit"

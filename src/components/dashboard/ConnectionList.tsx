@@ -46,7 +46,7 @@ export function ConnectionList({ items: initialItems }: { items: ConnectionListI
     setItems(initialItems);
   }, [initialItems]);
 
-  const sensors = useSensors(useSensor(PointerSensor));
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
   async function onDragEnd(event: DragEndEvent) {
     const { active, over } = event;
@@ -55,11 +55,15 @@ export function ConnectionList({ items: initialItems }: { items: ConnectionListI
     const newIndex = items.findIndex((item) => item.connection.id === over.id);
     const reordered = arrayMove(items, oldIndex, newIndex);
     setItems(reordered);
-    await fetch("/api/connections/reorder", {
+    const res = await fetch("/api/connections/reorder", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ orderedIds: reordered.map((item) => item.connection.id) }),
     });
+    if (!res.ok) {
+      console.error("Failed to persist connection reorder");
+      return;
+    }
     router.refresh();
   }
 

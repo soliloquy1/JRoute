@@ -12,7 +12,7 @@ export function BarChart({ data }: { data: DailyCount[] }) {
           <div
             key={d.day}
             className="flex-1 rounded-t bg-accent/60"
-            style={{ height: `${(d.count / max) * 100}%` }}
+            style={{ height: d.count > 0 ? `max(${(d.count / max) * 100}%, 2px)` : "0" }}
             title={`${d.day}: ${d.count}`}
           />
         ))}

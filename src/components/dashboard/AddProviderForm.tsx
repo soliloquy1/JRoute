@@ -18,11 +18,15 @@ export function AddProviderForm() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    await fetch("/api/providers", {
+    const res = await fetch("/api/providers", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ id, name, baseUrl, wireFormat, kind, enabled: true }),
     });
+    if (!res.ok) {
+      console.error("Failed to add provider", id);
+      return;
+    }
     setOpen(false);
     setId("");
     setName("");

@@ -8,16 +8,25 @@ export function KeyTable({ keys, presets }: { keys: ApiKeyRecord[]; presets: Pre
   const router = useRouter();
 
   async function setPreset(id: number, presetId: number | null) {
-    await fetch(`/api/keys/${id}`, {
+    const res = await fetch(`/api/keys/${id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ presetId }),
     });
+    if (!res.ok) {
+      console.error("Failed to set preset for key", id);
+      return;
+    }
     router.refresh();
   }
 
   async function revoke(id: number) {
-    await fetch(`/api/keys/${id}`, { method: "DELETE" });
+    if (!window.confirm("Revoke this key?")) return;
+    const res = await fetch(`/api/keys/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      console.error("Failed to revoke key", id);
+      return;
+    }
     router.refresh();
   }
 
