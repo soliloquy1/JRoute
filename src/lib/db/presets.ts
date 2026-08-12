@@ -60,6 +60,40 @@ export function listPresets(): Preset[] {
   return rows.map(toPreset);
 }
 
+export function updatePreset(
+  id: number,
+  patch: Partial<{
+    name: string;
+    prependBlockId: number | null;
+    appendBlockId: number | null;
+    toolMode: ToolMode;
+  }>
+): void {
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  if (patch.name !== undefined) {
+    sets.push("name = ?");
+    params.push(patch.name);
+  }
+  if (patch.prependBlockId !== undefined) {
+    sets.push("prepend_block_id = ?");
+    params.push(patch.prependBlockId);
+  }
+  if (patch.appendBlockId !== undefined) {
+    sets.push("append_block_id = ?");
+    params.push(patch.appendBlockId);
+  }
+  if (patch.toolMode !== undefined) {
+    sets.push("tool_mode = ?");
+    params.push(patch.toolMode);
+  }
+  if (sets.length === 0) return;
+  params.push(id);
+  getDb()
+    .prepare(`UPDATE presets SET ${sets.join(", ")} WHERE id = ?`)
+    .run(...params);
+}
+
 /**
  * Replaces the full lorebook membership set for a preset — not additive.
  * IMMEDIATE (not the default DEFERRED) takes the write lock up front so a
