@@ -66,7 +66,11 @@ export function ConnectionList({ items: initialItems }: { items: ConnectionListI
       >
         <div className="flex flex-col gap-2">
           {items.map((item) => (
-            <SortableRow key={item.connection.id} connection={item.connection} healthy={item.healthy} />
+            <SortableRow
+              key={item.connection.id}
+              connection={item.connection}
+              healthy={item.healthy}
+            />
           ))}
         </div>
       </SortableContext>
