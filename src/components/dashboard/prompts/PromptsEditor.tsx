@@ -38,7 +38,11 @@ export function PromptsEditor({
       </aside>
       <div className="min-w-0 flex-1">
         {selection ? (
-          <MonacoEditorPane selection={selection} onDone={() => setSelection(null)} />
+          <MonacoEditorPane
+            key={`${selection.kind}-${selection.item?.id ?? "new"}`}
+            selection={selection}
+            onDone={() => setSelection(null)}
+          />
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-text-muted">
             Select a block or lorebook to edit, or create a new one.
