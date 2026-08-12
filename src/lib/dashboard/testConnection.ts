@@ -19,6 +19,13 @@ export async function testConnection(connectionId: number): Promise<TestConnecti
   const connection = getConnectionById(connectionId);
   if (!connection) return { ok: false, error: "Connection not found" };
 
+  if (connection.credentialDecryptFailed) {
+    return {
+      ok: false,
+      error: "Stored credential could not be decrypted — check STORAGE_ENCRYPTION_KEY",
+    };
+  }
+
   const provider = getProvider(connection.providerId);
   if (!provider) return { ok: false, error: "Provider not found" };
 

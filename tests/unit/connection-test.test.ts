@@ -15,7 +15,7 @@ let fetchStub: typeof fetch = async () =>
   new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
 globalThis.fetch = ((...args: Parameters<typeof fetch>) => fetchStub(...args)) as typeof fetch;
 
-const { resetDb } = await import("../../src/lib/db/bootstrap.ts");
+const { resetDb, getDb } = await import("../../src/lib/db/bootstrap.ts");
 const { seedInitialUser, createSession } = await import("../../src/lib/auth/sessions.ts");
 const { upsertProvider } = await import("../../src/lib/db/providers.ts");
 const { createConnection, getConnectionById } = await import("../../src/lib/db/connections.ts");
@@ -76,6 +76,31 @@ test("a connection whose provider has no configured model reports a clear error,
   const result = await testConnection(mysteryConnId);
   assert.equal(result.ok, false);
   assert.equal(result.error, "No models configured for this provider");
+});
+
+test("a connection with an undecryptable credential reports a clear error, no network call", async () => {
+  const info = getDb()
+    .prepare("INSERT INTO connections (provider_id, label, api_key) VALUES (?, ?, ?)")
+    .run("openai", "broken", "enc:v1:deadbeef:cafebabe:00112233445566778899aabbccddeeff");
+  const brokenConnId = Number(info.lastInsertRowid);
+  const broken = getConnectionById(brokenConnId);
+  assert.equal(broken?.credentialDecryptFailed, true);
+
+  let fetchCalled = false;
+  fetchStub = async () => {
+    fetchCalled = true;
+    return new Response('{"choices":[{"message":{"content":"pong"}}]}', {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const result = await testConnection(brokenConnId);
+  assert.equal(result.ok, false);
+  assert.equal(
+    result.error,
+    "Stored credential could not be decrypted — check STORAGE_ENCRYPTION_KEY"
+  );
+  assert.equal(fetchCalled, false);
 });
 
 test("getConnectionById returns null for a missing id", () => {
