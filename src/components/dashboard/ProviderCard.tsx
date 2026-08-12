@@ -1,8 +1,18 @@
 // src/components/dashboard/ProviderCard.tsx
 import { listConnections } from "@/lib/db/connections.ts";
-import type { Provider } from "@/lib/db/types.ts";
+import type { Connection, Provider } from "@/lib/db/types.ts";
 import { ConnectionRow } from "./ConnectionRow.tsx";
 import { AddConnectionForm } from "./AddConnectionForm.tsx";
+import { RemoveProviderButton } from "./RemoveProviderButton.tsx";
+
+// Plain (non-component) helper so the impure `Date.now()` read happens outside
+// the component render body — matches the pattern in `(dashboard)/page.tsx`'s
+// `getOverviewData()` and keeps `react-hooks/purity` happy while still recomputing
+// on every server render (i.e. every `router.refresh()`), unlike a client-side
+// `useState` lazy initializer which only runs once at mount.
+function isConnectionHealthy(connection: Connection): boolean {
+  return connection.cooldownUntil === null || connection.cooldownUntil <= Date.now();
+}
 
 export function ProviderCard({ provider }: { provider: Provider }) {
   const connections = listConnections(provider.id);
@@ -15,13 +25,16 @@ export function ProviderCard({ provider }: { provider: Provider }) {
             {provider.baseUrl} · {provider.wireFormat}
           </div>
         </div>
-        <span className={provider.enabled ? "text-xs text-success" : "text-xs text-text-muted"}>
-          {provider.enabled ? "enabled" : "disabled"}
-        </span>
+        <div className="flex items-center gap-3">
+          <span className={provider.enabled ? "text-xs text-success" : "text-xs text-text-muted"}>
+            {provider.enabled ? "enabled" : "disabled"}
+          </span>
+          <RemoveProviderButton providerId={provider.id} />
+        </div>
       </div>
       <div className="flex flex-col gap-2">
         {connections.map((c) => (
-          <ConnectionRow key={c.id} connection={c} />
+          <ConnectionRow key={c.id} connection={c} healthy={isConnectionHealthy(c)} />
         ))}
       </div>
       <AddConnectionForm providerId={provider.id} />
