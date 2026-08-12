@@ -100,6 +100,15 @@ export function updateConnection(
     .run(...params);
 }
 
+export function reorderConnections(orderedIds: number[]): void {
+  const db = getDb();
+  const setPriority = db.prepare("UPDATE connections SET priority = ? WHERE id = ?");
+  const applyAll = db.transaction((ids: number[]) => {
+    ids.forEach((id, index) => setPriority.run(index, id));
+  });
+  applyAll(orderedIds);
+}
+
 export function deleteConnection(id: number): void {
   getDb().prepare("DELETE FROM connections WHERE id = ?").run(id);
 }

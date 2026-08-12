@@ -1,7 +1,7 @@
 // src/components/dashboard/ProviderCard.tsx
 import { listConnections } from "@/lib/db/connections.ts";
 import type { Connection, Provider } from "@/lib/db/types.ts";
-import { ConnectionRow } from "./ConnectionRow.tsx";
+import { ConnectionList } from "./ConnectionList.tsx";
 import { AddConnectionForm } from "./AddConnectionForm.tsx";
 import { RemoveProviderButton } from "./RemoveProviderButton.tsx";
 
@@ -32,11 +32,9 @@ export function ProviderCard({ provider }: { provider: Provider }) {
           <RemoveProviderButton providerId={provider.id} />
         </div>
       </div>
-      <div className="flex flex-col gap-2">
-        {connections.map((c) => (
-          <ConnectionRow key={c.id} connection={c} healthy={isConnectionHealthy(c)} />
-        ))}
-      </div>
+      <ConnectionList
+        items={connections.map((c) => ({ connection: c, healthy: isConnectionHealthy(c) }))}
+      />
       <AddConnectionForm providerId={provider.id} />
     </div>
   );
