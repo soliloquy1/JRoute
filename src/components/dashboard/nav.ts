@@ -22,4 +22,8 @@ export const NAV_GROUPS: NavGroup[] = [
     group: "PROMPTS & LOREBOOKS",
     items: [{ label: "Editor", href: "/prompts" }],
   },
+  {
+    group: "MCP",
+    items: [{ label: "Servers", href: "/mcp" }],
+  },
 ];
