@@ -3,7 +3,11 @@
   "version": "0.1.0",
   "description": "Self-hosted reverse proxy for JanitorAI: one OpenAI-compatible endpoint in front of your own LLM providers.",
   "type": "module",
+  "bin": {
+    "jroute": "./bin/jroute.js"
+  },
   "files": [
+    "bin/",
     "jroute/",
     "src/app/",
     "src/lib/",
