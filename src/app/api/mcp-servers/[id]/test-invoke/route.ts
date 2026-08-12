@@ -21,15 +21,20 @@ export async function POST(
     const { id } = await params;
     const server = getMcpServer(Number(id));
     if (!server) return jsonError(404, "Server not found");
-    const client = await connectMcpClient(server);
-    const result = await client.callTool({
-      name: parsed.data.toolName,
-      arguments: parsed.data.args ?? {},
-    });
-    return new Response(JSON.stringify({ result }), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    });
+    let client: Awaited<ReturnType<typeof connectMcpClient>> | undefined;
+    try {
+      client = await connectMcpClient(server);
+      const result = await client.callTool({
+        name: parsed.data.toolName,
+        arguments: parsed.data.args ?? {},
+      });
+      return new Response(JSON.stringify({ result }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    } finally {
+      await client?.close().catch(() => {});
+    }
   } catch (err) {
     console.error("[api/mcp-servers/:id/test-invoke] unhandled error:", err);
     return jsonError(
