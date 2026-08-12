@@ -28,6 +28,9 @@ export async function PATCH(
       headers: { "content-type": "application/json" },
     });
   } catch (err) {
+    if (err instanceof Error && "code" in err && err.code === "SQLITE_CONSTRAINT_UNIQUE") {
+      return jsonError(409, "A preset with this name already exists");
+    }
     console.error("[api/presets/:id] unhandled error:", err);
     return jsonError(500, "Internal error");
   }

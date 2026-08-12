@@ -59,6 +59,21 @@ test("PATCH /api/presets/:id with an empty body is 400", async () => {
   assert.equal(res.status, 400);
 });
 
+test("PATCH /api/presets/:id renaming to a duplicate name is 409", async () => {
+  createPreset("dup-a");
+  const idB = createPreset("dup-b");
+  const res = await presetById.PATCH(
+    new Request(`https://x/api/presets/${idB}`, {
+      method: "PATCH",
+      headers: authHeaders,
+      body: JSON.stringify({ name: "dup-a" }),
+    }),
+    { params: Promise.resolve({ id: String(idB) }) }
+  );
+  assert.equal(res.status, 409);
+  assert.equal(getPreset(idB)?.name, "dup-b");
+});
+
 test("POST /api/presets without a session is 401", async () => {
   const presetsRoute = await import("../../src/app/api/presets/route.ts");
   const res = await presetsRoute.POST(
