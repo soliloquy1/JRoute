@@ -22,6 +22,7 @@ export async function PATCH(
     const parsed = PatchConnectionSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return jsonError(400, "Invalid request body");
     const { id } = await params;
+    if (!Number.isInteger(Number(id))) return jsonError(400, "Invalid id");
     updateConnection(Number(id), parsed.data);
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
@@ -40,6 +41,7 @@ export async function DELETE(
   if (!authenticateDashboard(req)) return jsonError(401, "Unauthorized");
   try {
     const { id } = await params;
+    if (!Number.isInteger(Number(id))) return jsonError(400, "Invalid id");
     deleteConnection(Number(id));
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,

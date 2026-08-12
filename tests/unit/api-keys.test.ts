@@ -63,6 +63,26 @@ test("PATCH /api/keys/:id assigns a preset", async () => {
   assert.equal(listApiKeys().find((k) => k.id === key.id)?.presetId, presetId);
 });
 
+test("PATCH /api/keys/:id with a non-numeric id is 400", async () => {
+  const res = await keyById.PATCH(
+    new Request("https://x/api/keys/abc", {
+      method: "PATCH",
+      headers: authHeaders,
+      body: JSON.stringify({ presetId: null }),
+    }),
+    { params: Promise.resolve({ id: "abc" }) }
+  );
+  assert.equal(res.status, 400);
+});
+
+test("DELETE /api/keys/:id with a non-numeric id is 400", async () => {
+  const res = await keyById.DELETE(
+    new Request("https://x/api/keys/abc", { method: "DELETE", headers: authHeaders }),
+    { params: Promise.resolve({ id: "abc" }) }
+  );
+  assert.equal(res.status, 400);
+});
+
 test("DELETE /api/keys/:id revokes it", async () => {
   const [key] = listApiKeys();
   const res = await keyById.DELETE(

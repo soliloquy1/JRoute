@@ -94,6 +94,26 @@ test("PATCH /api/connections/:id without a session is 401", async () => {
   assert.equal(res.status, 401);
 });
 
+test("PATCH /api/connections/:id with a non-numeric id is 400", async () => {
+  const res = await connectionById.PATCH(
+    new Request("https://x/api/connections/abc", {
+      method: "PATCH",
+      headers: authHeaders,
+      body: JSON.stringify({ priority: 1 }),
+    }),
+    { params: Promise.resolve({ id: "abc" }) }
+  );
+  assert.equal(res.status, 400);
+});
+
+test("DELETE /api/connections/:id with a non-numeric id is 400", async () => {
+  const res = await connectionById.DELETE(
+    new Request("https://x/api/connections/abc", { method: "DELETE", headers: authHeaders }),
+    { params: Promise.resolve({ id: "abc" }) }
+  );
+  assert.equal(res.status, 400);
+});
+
 test("DELETE /api/connections/:id removes it", async () => {
   const [conn] = listConnections("openai");
   const res = await connectionById.DELETE(
