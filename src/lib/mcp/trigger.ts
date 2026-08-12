@@ -2,6 +2,7 @@
 import isSafeRegex from "safe-regex";
 import { listMcpServers } from "../db/mcpServers.ts";
 import { connectMcpClient } from "./client.ts";
+import { debugLog, debugLogError } from "../debugLog/logger.ts";
 import type { TaggedBlock } from "../../../jroute/convert/types.ts";
 
 export interface TriggerInput {
@@ -36,6 +37,13 @@ export async function runTriggerMode(input: TriggerInput): Promise<TaggedBlock[]
     const firstAllowedName = server.toolAllowlist?.split(",")[0]?.trim();
     if (!firstAllowedName) continue;
 
+    debugLog("mcp_trigger.matched", {
+      serverId: server.id,
+      serverName: server.name,
+      pattern,
+      tool: firstAllowedName,
+    });
+
     // `client` is declared outside the try so `finally` can close it regardless of which
     // branch below runs (success, tool-call failure, or connectMcpClient itself throwing —
     // in the last case `client` stays undefined and `client?.close()` is a safe no-op).
@@ -46,12 +54,19 @@ export async function runTriggerMode(input: TriggerInput): Promise<TaggedBlock[]
       client = await connectMcpClient(server);
       const result = await client.callTool({ name: firstAllowedName, arguments: {} });
       const text = extractTextResult(result);
+      debugLog("mcp_trigger.tool_result", {
+        serverId: server.id,
+        tool: firstAllowedName,
+        result,
+        text,
+      });
       if (text.length === 0) continue;
       return [{ role: "mcp-trigger", content: text, tag: "depth-injection", depth: 1 }];
-    } catch {
+    } catch (err) {
       // A connection/tool-call failure degrades to "no block for this trigger" — matching
       // the lorebook runner's (Plan 5) precedent of isolating one bad source from failing
       // the whole request. Try the next server rather than aborting the whole trigger pass.
+      debugLogError("mcp_trigger.failed", err, { serverId: server.id, tool: firstAllowedName });
       continue;
     } finally {
       await client?.close().catch(() => {});

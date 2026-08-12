@@ -2,6 +2,7 @@
 import { getLorebook } from "../db/lorebooks.ts";
 import { runLorebook, buildLorebookCtx, type CtxMessage } from "./sandbox.ts";
 import { scopeKeyFor } from "./scopeKey.ts";
+import { debugLog } from "../debugLog/logger.ts";
 import type { TaggedBlock } from "../../../jroute/convert/types.ts";
 
 const DEFAULT_DEPTH = 2;
@@ -72,6 +73,7 @@ export function runLorebooksForRequest(input: RunnerInput): TaggedBlock[] {
     // copy happens either way), and per-lorebook runtime isolation is an additional
     // security benefit — one lorebook's guest heap can't affect another's — not a compromise.
     const outcome = runLorebook(lorebook.source, buildLorebookCtx(ctxInput));
+    debugLog("lorebook.outcome", { lorebookId: lorebook.id, name: lorebook.name, outcome });
     if (outcome.kind !== "ok") continue;
 
     const block = toBlock(outcome.result);
