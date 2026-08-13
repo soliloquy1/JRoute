@@ -1,5 +1,6 @@
 import { listApiKeys } from "@/lib/auth/apiKeys.ts";
 import { listPresets } from "@/lib/db/presets.ts";
+import { listRichPresets } from "@/lib/db/richPresets.ts";
 import { getRecentUsage, getUsageByApiKey } from "@/lib/db/usageLogs.ts";
 import { KeyTable } from "@/components/dashboard/KeyTable.tsx";
 import { GenerateKeyDialog } from "@/components/dashboard/GenerateKeyDialog.tsx";
@@ -13,6 +14,7 @@ export default async function KeysPage({
   const { apiKeyId } = await searchParams;
   const keys = listApiKeys();
   const presets = listPresets();
+  const richPresets = listRichPresets();
   const logs = apiKeyId ? getUsageByApiKey(Number(apiKeyId), 50) : getRecentUsage(50);
 
   return (
@@ -21,7 +23,7 @@ export default async function KeysPage({
         <h1 className="text-lg font-semibold text-text-main">API keys</h1>
         <GenerateKeyDialog />
       </div>
-      <KeyTable keys={keys} presets={presets} />
+      <KeyTable keys={keys} presets={presets} richPresets={richPresets} />
 
       <div id="log" className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
