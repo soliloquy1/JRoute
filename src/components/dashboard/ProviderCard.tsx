@@ -6,10 +6,8 @@ import { AddConnectionForm } from "./AddConnectionForm.tsx";
 import { RemoveProviderButton } from "./RemoveProviderButton.tsx";
 
 // Plain (non-component) helper so the impure `Date.now()` read happens outside
-// the component render body — matches the pattern in `(dashboard)/page.tsx`'s
-// `getOverviewData()` and keeps `react-hooks/purity` happy while still recomputing
-// on every server render (i.e. every `router.refresh()`), unlike a client-side
-// `useState` lazy initializer which only runs once at mount.
+// the component render body — keeps `react-hooks/purity` happy while still
+// recomputing on every server render (i.e. every `router.refresh()`).
 function isConnectionHealthy(connection: Connection): boolean {
   return connection.cooldownUntil === null || connection.cooldownUntil <= Date.now();
 }
@@ -17,25 +15,34 @@ function isConnectionHealthy(connection: Connection): boolean {
 export function ProviderCard({ provider }: { provider: Provider }) {
   const connections = listConnections(provider.id);
   return (
-    <div className="rounded-card border border-border bg-card p-4 shadow-soft">
-      <div className="mb-3 flex items-center justify-between">
-        <div>
-          <div className="font-medium text-text-main">{provider.name}</div>
-          <div className="text-xs text-text-muted">
+    <section className="flex flex-col rounded-card border border-border bg-card p-4 shadow-soft">
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="truncate text-sm font-semibold text-text-main">{provider.name}</span>
+            <span
+              className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                provider.enabled
+                  ? "bg-success/10 text-success"
+                  : "bg-bg-subtle text-text-muted"
+              }`}
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${provider.enabled ? "bg-success" : "bg-text-muted"}`} />
+              {provider.enabled ? "enabled" : "disabled"}
+            </span>
+          </div>
+          <div className="mt-0.5 truncate font-mono text-[11px] text-text-muted">
             {provider.baseUrl} · {provider.wireFormat}
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          <span className={provider.enabled ? "text-xs text-success" : "text-xs text-text-muted"}>
-            {provider.enabled ? "enabled" : "disabled"}
-          </span>
-          <RemoveProviderButton providerId={provider.id} />
-        </div>
+        <RemoveProviderButton providerId={provider.id} />
       </div>
       <ConnectionList
         items={connections.map((c) => ({ connection: c, healthy: isConnectionHealthy(c) }))}
       />
-      <AddConnectionForm providerId={provider.id} />
-    </div>
+      <div className="mt-2">
+        <AddConnectionForm providerId={provider.id} />
+      </div>
+    </section>
   );
 }

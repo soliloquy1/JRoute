@@ -5,6 +5,7 @@ import { getRecentUsage, getUsageByApiKey } from "@/lib/db/usageLogs.ts";
 import { KeyTable } from "@/components/dashboard/KeyTable.tsx";
 import { GenerateKeyDialog } from "@/components/dashboard/GenerateKeyDialog.tsx";
 import { LogTable } from "@/components/dashboard/LogTable.tsx";
+import { SectionTitle } from "@/components/dashboard/ui.tsx";
 
 export default async function KeysPage({
   searchParams,
@@ -16,35 +17,51 @@ export default async function KeysPage({
   const presets = listPresets();
   const richPresets = listRichPresets();
   const logs = apiKeyId ? getUsageByApiKey(Number(apiKeyId), 50) : getRecentUsage(50);
+  const filterKey = apiKeyId ? keys.find((k) => k.id === Number(apiKeyId)) : null;
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold text-text-main">API keys</h1>
-        <GenerateKeyDialog />
-      </div>
-      <KeyTable keys={keys} presets={presets} richPresets={richPresets} />
-
-      <div id="log" className="flex flex-col gap-3">
+    <div className="flex max-w-5xl flex-col gap-8">
+      <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-text-main">Request log</h2>
-          <div className="flex gap-2 text-xs">
-            <a href="/keys#log" className="text-accent hover:underline">
-              all keys
-            </a>
-            {keys.map((k) => (
+          <SectionTitle>Keys</SectionTitle>
+          <GenerateKeyDialog />
+        </div>
+        <KeyTable keys={keys} presets={presets} richPresets={richPresets} />
+      </section>
+
+      <section id="log" className="flex flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <SectionTitle>Request log</SectionTitle>
+          {keys.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1 text-xs">
               <a
-                key={k.id}
-                href={`/keys?apiKeyId=${k.id}#log`}
-                className="text-accent hover:underline"
+                href="/keys#log"
+                className={`rounded-full px-2.5 py-1 transition-colors ${
+                  !filterKey
+                    ? "bg-primary-soft font-medium text-primary"
+                    : "text-text-muted hover:bg-bg-subtle hover:text-text-main"
+                }`}
               >
-                {k.label}
+                all keys
               </a>
-            ))}
-          </div>
+              {keys.map((k) => (
+                <a
+                  key={k.id}
+                  href={`/keys?apiKeyId=${k.id}#log`}
+                  className={`rounded-full px-2.5 py-1 transition-colors ${
+                    filterKey?.id === k.id
+                      ? "bg-primary-soft font-medium text-primary"
+                      : "text-text-muted hover:bg-bg-subtle hover:text-text-main"
+                  }`}
+                >
+                  {k.label}
+                </a>
+              ))}
+            </div>
+          )}
         </div>
         <LogTable rows={logs} keys={keys} />
-      </div>
+      </section>
     </div>
   );
 }

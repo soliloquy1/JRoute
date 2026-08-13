@@ -1253,3 +1253,111 @@ test("richPresetId takes priority over presetId when a key somehow has both stor
     "the simple preset's blocks must NOT be applied when richPresetId is set"
   );
 });
+
+// Plan 9 review fix (C1 regression): a rich preset with an enabled `charDescription`
+// marker consumes the client's system message into the assembled blocks. handleChat must
+// strip that message from body.messages — otherwise every converter hoists it a second
+// time and the upstream receives (and bills for) the character description twice. This
+// fires on SillyTavern's DEFAULT prompt order, so it's the common case, not an edge.
+test("richPresetId key: client system message is sent to upstream exactly once", async () => {
+  const { createRichPreset } = await import("../../src/lib/db/richPresets.ts");
+  createConnection("openai", "primary", "sk-1");
+  const richPresetId = createRichPreset("RP3", {
+    prompts: [
+      { identifier: "main", name: "Main", role: "system", content: "MAIN_RULES" },
+      { identifier: "charDescription", name: "Char", role: "system", marker: true },
+      { identifier: "chatHistory", name: "History", role: "system", marker: true },
+    ],
+    prompt_order: [
+      {
+        character_id: 100001,
+        order: [
+          { identifier: "charDescription", enabled: true },
+          { identifier: "main", enabled: true },
+          { identifier: "chatHistory", enabled: true },
+        ],
+      },
+    ],
+  });
+  const issued = issueApiKey("rich-dedup-key");
+  const apiKey = { ...verifyApiKey(issued.secret)!, richPresetId, presetId: null };
+
+  let capturedBody: Record<string, unknown> | null = null;
+  const fetchImpl: typeof fetch = async (_url, init) => {
+    capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return new Response(JSON.stringify({ id: "x", choices: [], usage: {} }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const res = await handleChat(
+    post({
+      model: "gpt-4o",
+      messages: [
+        { role: "system", content: "CARD_DESCRIPTION_TEXT" },
+        { role: "user", content: "hi" },
+      ],
+    }),
+    apiKey,
+    { fetchImpl }
+  );
+  assert.equal(res.status, 200);
+  assert.ok(capturedBody !== null, "request must have reached upstream");
+  const wire = JSON.stringify(capturedBody);
+  const occurrences = wire.split("CARD_DESCRIPTION_TEXT").length - 1;
+  assert.equal(
+    occurrences,
+    1,
+    `character description must appear exactly once upstream, got ${occurrences}`
+  );
+});
+
+test("richPresetId key: preset WITHOUT charDescription leaves the client system message in place", async () => {
+  const { createRichPreset } = await import("../../src/lib/db/richPresets.ts");
+  createConnection("openai", "primary", "sk-1");
+  const richPresetId = createRichPreset("RP4", {
+    prompts: [
+      { identifier: "main", name: "Main", role: "system", content: "MAIN_RULES" },
+      { identifier: "chatHistory", name: "History", role: "system", marker: true },
+    ],
+    prompt_order: [
+      {
+        character_id: 100001,
+        order: [
+          { identifier: "main", enabled: true },
+          { identifier: "chatHistory", enabled: true },
+        ],
+      },
+    ],
+  });
+  const issued = issueApiKey("rich-keep-system-key");
+  const apiKey = { ...verifyApiKey(issued.secret)!, richPresetId, presetId: null };
+
+  let capturedBody: Record<string, unknown> | null = null;
+  const fetchImpl: typeof fetch = async (_url, init) => {
+    capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return new Response(JSON.stringify({ id: "x", choices: [], usage: {} }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const res = await handleChat(
+    post({
+      model: "gpt-4o",
+      messages: [
+        { role: "system", content: "CLIENT_SYSTEM" },
+        { role: "user", content: "hi" },
+      ],
+    }),
+    apiKey,
+    { fetchImpl }
+  );
+  assert.equal(res.status, 200);
+  const wire = JSON.stringify(capturedBody);
+  assert.equal(
+    wire.split("CLIENT_SYSTEM").length - 1,
+    1,
+    "client system message must survive exactly once when the preset does not consume it"
+  );
+  assert.ok(wire.includes("MAIN_RULES"), "preset content must still be applied");
+});

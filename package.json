@@ -74,6 +74,7 @@
     "dompurify": "^3.4.12",
     "express": "^5.2.1",
     "fflate": "^0.8.3",
+    "geist": "^1.7.2",
     "jose": "^6.2.3",
     "js-yaml": "^5.2.2",
     "jsonc-parser": "^3.3.1",

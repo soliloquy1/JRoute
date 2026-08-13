@@ -40,7 +40,13 @@ export function extractSamplerParams(raw: RichPresetJson): Record<string, unknow
 
 function orderedEnabledEntries(raw: RichPresetJson): RichPromptEntry[] {
   const promptsById = new Map(raw.prompts.map((p) => [p.identifier, p]));
-  const orderEntry = raw.prompt_order[0];
+  // An empty prompt_order (fresh ST installs ship `prompt_order: []`) means "declaration
+  // order, everything enabled" — the same fallback ST applies.
+  if (raw.prompt_order.length === 0) return raw.prompts;
+  // character_id 100001 is ST's global/default order entry; multi-entry exports append
+  // per-character orders in arbitrary positions, so index 0 is not trustworthy.
+  const orderEntry =
+    raw.prompt_order.find((e) => e.character_id === 100001) ?? raw.prompt_order[0];
   const out: RichPromptEntry[] = [];
   for (const o of orderEntry.order) {
     if (!o.enabled) continue;
@@ -87,6 +93,13 @@ export interface AssembleRichPresetInput {
 export interface AssembleRichPresetOutput {
   blocks: TaggedBlock[];
   samplerParams: Record<string, unknown>;
+  /**
+   * True when the client's system message was placed into the blocks via the preset's
+   * `charDescription` marker. The caller (handleChat) MUST then strip that message from
+   * `body.messages` — otherwise every converter hoists it a second time and the upstream
+   * receives the character description twice (and pays for it twice).
+   */
+  consumedSystemPrompt: boolean;
 }
 
 export function assembleRichPreset(input: AssembleRichPresetInput): AssembleRichPresetOutput {
@@ -114,6 +127,7 @@ export function assembleRichPreset(input: AssembleRichPresetInput): AssembleRich
   const append: TaggedBlock[] = [];
   const pendingInjections: PendingDepthInjection[] = [];
   let worldInfoBlocksAdded = false;
+  let consumedSystemPrompt = false;
 
   entries.forEach((entry, index) => {
     if (entry.identifier === "chatHistory") return;
@@ -133,6 +147,7 @@ export function assembleRichPreset(input: AssembleRichPresetInput): AssembleRich
     let text: string | null;
     if (entry.identifier === "charDescription") {
       text = rawSystemPrompt.length > 0 ? rawSystemPrompt : null;
+      if (text !== null) consumedSystemPrompt = true;
     } else if (CHAR_MARKERS_ALWAYS_EMPTY.has(entry.identifier)) {
       text = null;
     } else {
@@ -164,5 +179,6 @@ export function assembleRichPreset(input: AssembleRichPresetInput): AssembleRich
   return {
     blocks: [...prepend, ...finalizePendingInjections(pendingInjections), ...append],
     samplerParams: extractSamplerParams(raw),
+    consumedSystemPrompt,
   };
 }

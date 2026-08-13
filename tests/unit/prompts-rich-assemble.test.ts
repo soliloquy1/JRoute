@@ -230,3 +230,49 @@ test("worldInfoBefore and worldInfoAfter both enabled resolve the lorebook set e
   const out = assembleRichPreset({ preset: p, messages: [], rawSystemPrompt: "d" });
   assert.doesNotThrow(() => out);
 });
+
+// Plan 9 review fixes (C2/M1): prompt_order can be empty (fresh ST installs) or contain
+// multiple entries with per-character orders appended in arbitrary positions.
+test("empty prompt_order falls back to declaration order, all enabled", () => {
+  const p = preset();
+  p.raw.prompt_order = [];
+  const { blocks } = assembleRichPreset({ preset: p, messages: [], rawSystemPrompt: "" });
+  const systemTexts = blocks
+    .filter((b) => b.tag === "system-block")
+    .map((b) => String(b.content));
+  assert.ok(
+    systemTexts.some((t) => t.includes("Write {{char}}'s reply".replace("{{char}}", "Izumi").slice(0, 5)) || t.includes("Write Izumi")),
+    "declaration-order prompt must be included when prompt_order is empty"
+  );
+  assert.ok(
+    systemTexts.some((t) => t.includes("Stay in character.")),
+    "later-declared prompt must also be included (order fallback covers all entries)"
+  );
+});
+
+test("multi-entry prompt_order prefers the character_id 100001 default over index 0", () => {
+  const p = preset();
+  // A character-specific order FIRST that disables everything; the default second.
+  p.raw.prompt_order = [
+    {
+      character_id: 42,
+      order: [
+        { identifier: "main", enabled: false },
+        { identifier: "jailbreak", enabled: false },
+      ],
+    },
+    {
+      character_id: 100001,
+      order: [
+        { identifier: "main", enabled: true },
+        { identifier: "chatHistory", enabled: true },
+      ],
+    },
+  ];
+  const { blocks } = assembleRichPreset({ preset: p, messages: [], rawSystemPrompt: "" });
+  const texts = blocks.map((b) => String(b.content)).join("\n");
+  assert.ok(
+    texts.includes("Write Izumi"),
+    "the 100001 default order must win even when it is not the first entry"
+  );
+});

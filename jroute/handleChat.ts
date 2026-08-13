@@ -115,7 +115,7 @@ export async function handleChat(
       if (key.richPresetId !== null) {
         const richPreset = getRichPreset(key.richPresetId);
         if (richPreset) {
-          const { blocks: richBlocks, samplerParams } = assembleRichPreset({
+          const { blocks: richBlocks, samplerParams, consumedSystemPrompt } = assembleRichPreset({
             preset: richPreset,
             messages,
             rawSystemPrompt,
@@ -125,8 +125,21 @@ export async function handleChat(
           // `converter.convertRequest({ ..., body, blocks })` call further below, is what
           // makes the override take effect; that call site itself needs no change.
           Object.assign(body, samplerParams);
+          if (consumedSystemPrompt) {
+            // richAssemble placed the client's system message into the blocks at the
+            // preset's charDescription position. Leaving it in body.messages too would
+            // let every converter hoist it a second time — the upstream would receive
+            // (and bill for) the character description twice.
+            const msgs = body.messages as Array<{ role: string }>;
+            const systemIndex = msgs.findIndex((m) => m.role === "system");
+            if (systemIndex !== -1) msgs.splice(systemIndex, 1);
+          }
           return [...richBlocks, ...triggerBlocks];
         }
+        // The key references a preset that no longer exists (deleted after assignment).
+        // Falling through to the simple-preset path with no assembly is correct, but it
+        // must be visible — a silent no-prompt request is hell to debug from the client side.
+        debugLog("preset.stale_reference", { requestId, richPresetId: key.richPresetId });
       }
 
       const systemBlocks = resolveSystemBlocks(key.presetId);

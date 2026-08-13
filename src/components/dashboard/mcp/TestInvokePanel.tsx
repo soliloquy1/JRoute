@@ -2,6 +2,7 @@
 "use client";
 
 import { useState } from "react";
+import { PrimaryButton } from "../ui.tsx";
 
 interface ToolDef {
   type: "function";
@@ -33,8 +34,10 @@ export function TestInvokePanel({ serverId, tool }: { serverId: number; tool: To
     });
     setLoading(false);
     if (!res.ok) {
-      const body = (await res.json()) as { error: { message: string } };
-      setError(body.error.message);
+      const body = (await res.json().catch(() => null)) as {
+        error?: { message?: string };
+      } | null;
+      setError(body?.error?.message ?? "Invocation failed");
       return;
     }
     const body = (await res.json()) as { result: unknown };
@@ -42,25 +45,23 @@ export function TestInvokePanel({ serverId, tool }: { serverId: number; tool: To
   }
 
   return (
-    <div className="mt-2 flex flex-col gap-2 rounded-control border border-border bg-bg-subtle p-2">
-      <div className="text-xs font-medium text-text-main">{tool.function.name}</div>
-      <p className="text-xs text-text-muted">{tool.function.description}</p>
+    <div className="mt-1 mb-2 ml-5 flex flex-col gap-2 rounded-control border border-border bg-bg p-3">
+      <p className="text-xs leading-relaxed text-text-muted">{tool.function.description}</p>
       <textarea
         value={argsText}
         onChange={(e) => setArgsText(e.target.value)}
         rows={3}
-        className="rounded-control border border-border bg-bg p-2 font-mono text-xs text-text-main"
+        spellCheck={false}
+        className="rounded-control border border-border-strong bg-card p-2 font-mono text-xs text-text-main focus:border-primary"
       />
-      <button
-        onClick={invoke}
-        disabled={loading}
-        className="self-start rounded-control bg-primary px-2 py-1 text-xs text-white hover:bg-primary-hover disabled:opacity-50"
-      >
-        {loading ? "Invoking…" : "Invoke"}
-      </button>
+      <div>
+        <PrimaryButton onClick={invoke} disabled={loading} className="px-2.5 py-1 text-xs">
+          {loading ? "Invoking…" : "Invoke"}
+        </PrimaryButton>
+      </div>
       {error && <p className="text-xs text-error">{error}</p>}
       {result && (
-        <pre className="max-h-40 overflow-auto rounded-control bg-bg p-2 text-xs text-text-main">
+        <pre className="max-h-48 overflow-auto rounded-control border border-border bg-card p-2 font-mono text-[11px] leading-relaxed text-text-main">
           {result}
         </pre>
       )}

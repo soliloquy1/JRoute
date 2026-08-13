@@ -45,7 +45,59 @@ test("rejects an empty prompts array", () => {
   assert.equal(result.success, false);
 });
 
-test("rejects a preset with no prompt_order entries", () => {
+test("accepts an empty prompt_order (fresh ST installs ship `prompt_order: []`)", () => {
   const result = RichPresetJsonSchema.safeParse(minimalPreset({ prompt_order: [] }));
+  assert.equal(result.success, true);
+  assert.deepEqual(result.data!.prompt_order, []);
+});
+
+// Real-world SillyTavern export shapes (Prompt Manager "export" produces a FLAT
+// prompt_order with no character_id wrapper; form fields arrive as strings).
+test("accepts and normalizes a flat prompt_order (Prompt Manager export shape)", () => {
+  const result = RichPresetJsonSchema.safeParse(
+    minimalPreset({ prompt_order: [{ identifier: "main", enabled: true }] })
+  );
+  assert.equal(result.success, true);
+  assert.deepEqual(result.data!.prompt_order, [
+    { character_id: 100001, order: [{ identifier: "main", enabled: true }] },
+  ]);
+});
+
+test("accepts a string character_id (ST coerces with String() itself)", () => {
+  const result = RichPresetJsonSchema.safeParse(
+    minimalPreset({ prompt_order: [{ character_id: "100001", order: [{ identifier: "main", enabled: true }] }] })
+  );
+  assert.equal(result.success, true);
+  assert.equal(result.data!.prompt_order[0].character_id, 100001);
+});
+
+test("accepts content: null on marker entries", () => {
+  const result = RichPresetJsonSchema.safeParse(
+    minimalPreset({
+      prompts: [{ identifier: "chatHistory", name: "History", role: "system", marker: true, content: null }],
+    })
+  );
+  assert.equal(result.success, true);
+  assert.equal(result.data!.prompts[0].content, null);
+});
+
+test("accepts injection_position as a string and normalizes to number", () => {
+  const result = RichPresetJsonSchema.safeParse(
+    minimalPreset({
+      prompts: [
+        { identifier: "main", name: "Main", role: "system", content: "x", injection_position: "1", injection_depth: 4 },
+      ],
+    })
+  );
+  assert.equal(result.success, true);
+  assert.equal(result.data!.prompts[0].injection_position, 1);
+});
+
+test("rejects a negative injection_depth", () => {
+  const result = RichPresetJsonSchema.safeParse(
+    minimalPreset({
+      prompts: [{ identifier: "main", name: "Main", role: "system", content: "x", injection_position: 1, injection_depth: -2 }],
+    })
+  );
   assert.equal(result.success, false);
 });

@@ -3,6 +3,8 @@
 
 import { useState } from "react";
 import type { Preset } from "@/lib/db/types.ts";
+import { PrimaryButton, inputClass, SectionTitle } from "../ui.tsx";
+import { cn } from "@/lib/cn.ts";
 
 const FORMATS = ["openai", "anthropic", "gemini"] as const;
 
@@ -34,44 +36,52 @@ export function PreviewPanel({ presets }: { presets: Preset[] }) {
   }
 
   return (
-    <div className="flex flex-1 flex-col gap-2 rounded-card border border-border bg-card p-4">
-      <div className="text-xs font-medium tracking-wide text-text-muted">LIVE PREVIEW</div>
-      <select
-        value={presetId}
-        onChange={(e) => setPresetId(Number(e.target.value))}
-        className="rounded-control border border-border bg-bg-subtle p-2 text-sm text-text-main"
-      >
-        {presets.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.name}
-          </option>
-        ))}
-      </select>
-      <div className="flex gap-1">
-        {FORMATS.map((f) => (
-          <button
-            key={f}
-            onClick={() => setFormat(f)}
-            className={`rounded-control px-2 py-1 text-xs ${
-              format === f ? "bg-primary text-white" : "text-text-main hover:bg-bg-subtle"
-            }`}
+    <div className="flex flex-1 flex-col gap-3 rounded-card border border-border bg-card p-4 shadow-soft">
+      <SectionTitle>Live preview</SectionTitle>
+      <p className="text-[11px] leading-relaxed text-text-muted">
+        The exact request body an upstream would receive, rendered per wire format.
+      </p>
+      {presets.length === 0 ? (
+        <p className="text-xs text-text-muted">Create a simple preset above to preview it.</p>
+      ) : (
+        <>
+          <select
+            value={presetId}
+            onChange={(e) => setPresetId(Number(e.target.value))}
+            className={inputClass}
           >
-            {f}
-          </button>
-        ))}
-      </div>
-      <button
-        onClick={refresh}
-        disabled={loading}
-        className="rounded-control bg-primary px-3 py-1.5 text-sm text-white hover:bg-primary-hover disabled:opacity-50"
-      >
-        {loading ? "Refreshing…" : "Refresh preview"}
-      </button>
-      {error && <p className="text-xs text-error">{error}</p>}
-      {payload && (
-        <pre className="max-h-96 overflow-auto rounded-control bg-bg-subtle p-2 text-xs text-text-main">
-          {payload}
-        </pre>
+            {presets.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          <div className="flex gap-1 rounded-control border border-border p-0.5">
+            {FORMATS.map((f) => (
+              <button
+                key={f}
+                onClick={() => setFormat(f)}
+                className={cn(
+                  "flex-1 rounded-[5px] px-2 py-1 font-mono text-[11px] transition-colors",
+                  format === f
+                    ? "bg-primary font-medium text-white"
+                    : "text-text-muted hover:bg-bg-subtle hover:text-text-main"
+                )}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
+          <PrimaryButton onClick={refresh} disabled={loading || !presetId}>
+            {loading ? "Refreshing…" : "Refresh preview"}
+          </PrimaryButton>
+          {error && <p className="text-xs text-error">{error}</p>}
+          {payload && (
+            <pre className="max-h-96 overflow-auto rounded-control border border-border bg-bg p-3 font-mono text-[11px] leading-relaxed text-text-main">
+              {payload}
+            </pre>
+          )}
+        </>
       )}
     </div>
   );
