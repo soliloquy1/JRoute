@@ -8,6 +8,7 @@ interface ApiKeyRow {
   key_hash: string;
   label: string;
   preset_id: number | null;
+  rich_preset_id: number | null;
   tool_mode: string;
   rate_limit_per_min: number;
   created_at: number;
@@ -25,8 +26,7 @@ function toRecord(row: ApiKeyRow): ApiKeyRecord {
     keyHash: row.key_hash,
     label: row.label,
     presetId: row.preset_id,
-    // Placeholder until the api-keys wiring task maps `row.rich_preset_id` for real.
-    richPresetId: null,
+    richPresetId: row.rich_preset_id,
     toolMode: row.tool_mode as ToolMode,
     rateLimitPerMin: row.rate_limit_per_min,
     createdAt: row.created_at,
@@ -74,8 +74,20 @@ export function revokeApiKey(id: number): void {
   getDb().prepare("DELETE FROM api_keys WHERE id = ?").run(id);
 }
 
+// Mutual exclusivity between presetId and richPresetId is enforced by each setter actively
+// clearing the other column on every write (design spec §4) — simpler and more robust than a
+// cross-field Zod refine, which would reject legitimate "clear A, set B" flows that send one
+// field per call.
 export function setApiKeyPreset(id: number, presetId: number | null): void {
-  getDb().prepare("UPDATE api_keys SET preset_id = ? WHERE id = ?").run(presetId, id);
+  getDb()
+    .prepare("UPDATE api_keys SET preset_id = ?, rich_preset_id = NULL WHERE id = ?")
+    .run(presetId, id);
+}
+
+export function setApiKeyRichPreset(id: number, richPresetId: number | null): void {
+  getDb()
+    .prepare("UPDATE api_keys SET rich_preset_id = ?, preset_id = NULL WHERE id = ?")
+    .run(richPresetId, id);
 }
 
 export function listApiKeys(): ApiKeyRecord[] {

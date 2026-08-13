@@ -2,10 +2,11 @@
 import { z } from "zod";
 import { authenticateDashboard } from "@/lib/auth/guard.ts";
 import { jsonError } from "@jroute/errors.ts";
-import { setApiKeyPreset, revokeApiKey } from "@/lib/auth/apiKeys.ts";
+import { setApiKeyPreset, setApiKeyRichPreset, revokeApiKey } from "@/lib/auth/apiKeys.ts";
 
 const PatchKeySchema = z.object({
-  presetId: z.number().int().nullable(),
+  presetId: z.number().int().nullable().optional(),
+  richPresetId: z.number().int().nullable().optional(),
 });
 
 export async function PATCH(
@@ -18,7 +19,11 @@ export async function PATCH(
     if (!parsed.success) return jsonError(400, "Invalid request body");
     const { id } = await params;
     if (!Number.isInteger(Number(id))) return jsonError(400, "Invalid id");
-    setApiKeyPreset(Number(id), parsed.data.presetId);
+    if (parsed.data.richPresetId !== undefined) {
+      setApiKeyRichPreset(Number(id), parsed.data.richPresetId);
+    } else if (parsed.data.presetId !== undefined) {
+      setApiKeyPreset(Number(id), parsed.data.presetId);
+    }
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
       headers: { "content-type": "application/json" },

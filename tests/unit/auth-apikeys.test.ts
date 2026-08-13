@@ -10,7 +10,7 @@ const dir = mkdtempSync(join(tmpdir(), "jroute-test-"));
 process.env.DATA_DIR = dir;
 
 const { getDb, resetDb } = await import("../../src/lib/db/bootstrap.ts");
-const { issueApiKey, verifyApiKey, revokeApiKey, setApiKeyPreset } =
+const { issueApiKey, verifyApiKey, revokeApiKey, setApiKeyPreset, setApiKeyRichPreset } =
   await import("../../src/lib/auth/apiKeys.ts");
 
 after(() => {
@@ -67,4 +67,30 @@ test("setApiKeyPreset can clear a preset back to null", () => {
   assert.equal(verifyApiKey(secret)!.presetId, 42);
   setApiKeyPreset(key.id, null);
   assert.equal(verifyApiKey(secret)!.presetId, null);
+});
+
+test("setApiKeyRichPreset sets richPresetId and clears presetId", async () => {
+  const { createPreset } = await import("../../src/lib/db/presets.ts");
+  const { createRichPreset } = await import("../../src/lib/db/richPresets.ts");
+  const { id, secret } = issueApiKey("test-key");
+  const presetId = createPreset("Simple");
+  const richPresetId = createRichPreset("Rich", {
+    prompts: [{ identifier: "main", name: "Main", role: "system", content: "hi" }],
+    prompt_order: [{ character_id: 100001, order: [{ identifier: "main", enabled: true }] }],
+  });
+
+  setApiKeyPreset(id, presetId);
+  let rec = verifyApiKey(secret);
+  assert.equal(rec?.presetId, presetId);
+  assert.equal(rec?.richPresetId, null);
+
+  setApiKeyRichPreset(id, richPresetId);
+  rec = verifyApiKey(secret);
+  assert.equal(rec?.richPresetId, richPresetId);
+  assert.equal(rec?.presetId, null, "setting a rich preset must clear any simple preset");
+
+  setApiKeyPreset(id, presetId);
+  rec = verifyApiKey(secret);
+  assert.equal(rec?.presetId, presetId);
+  assert.equal(rec?.richPresetId, null, "setting a simple preset must clear any rich preset");
 });
