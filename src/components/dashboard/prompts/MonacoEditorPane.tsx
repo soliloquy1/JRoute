@@ -11,9 +11,12 @@ import Editor, { loader } from "@monaco-editor/react";
 // so the default loader script is refused and the editor never initializes.
 loader.config({ monaco });
 import type { PromptBlock, Lorebook, PromptBlockKind, LorebookScope } from "@/lib/db/types.ts";
+import { PrimaryButton, GhostButton, DangerButton, Field, inputClass } from "../ui.tsx";
+import { useIsDark } from "@/lib/useTheme.ts";
 
 export type EditorSelection =
-  { kind: "block"; item: PromptBlock | null } | { kind: "lorebook"; item: Lorebook | null };
+  | { kind: "block"; item: PromptBlock | null }
+  | { kind: "lorebook"; item: Lorebook | null };
 
 export function MonacoEditorPane({
   selection,
@@ -36,40 +39,51 @@ export function MonacoEditorPane({
   const [enabled, setEnabled] = useState(
     selection.kind === "lorebook" ? (selection.item?.enabled ?? true) : true
   );
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  // Monaco follows the UI theme ("vs" / "vs-dark") via the shared hydration-safe hook.
+  const editorTheme = useIsDark() ? "vs-dark" : "vs";
 
   // Selection changes reset this pane's state via a `key` prop at the call site
   // (PromptsEditor) — remount-on-change instead of a setState-in-effect, which this
   // repo's lint config (react-hooks/set-state-in-effect) rejects as an error.
 
   async function save() {
+    setSaving(true);
+    setError(null);
+    let res: Response;
     if (selection.kind === "block") {
-      if (selection.item) {
-        await fetch(`/api/prompt-blocks/${selection.item.id}`, {
-          method: "PATCH",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ name, content }),
-        });
-      } else {
-        await fetch("/api/prompt-blocks", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ name, kind: blockKind, content }),
-        });
-      }
+      res = selection.item
+        ? await fetch(`/api/prompt-blocks/${selection.item.id}`, {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ name, content }),
+          })
+        : await fetch("/api/prompt-blocks", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ name, kind: blockKind, content }),
+          });
     } else {
-      if (selection.item) {
-        await fetch(`/api/lorebooks/${selection.item.id}`, {
-          method: "PATCH",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ name, source: content, scope, enabled }),
-        });
-      } else {
-        await fetch("/api/lorebooks", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ name, source: content, scope, enabled }),
-        });
-      }
+      res = selection.item
+        ? await fetch(`/api/lorebooks/${selection.item.id}`, {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ name, source: content, scope, enabled }),
+          })
+        : await fetch("/api/lorebooks", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ name, source: content, scope, enabled }),
+          });
+    }
+    setSaving(false);
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as {
+        error?: { message?: string };
+      } | null;
+      setError(body?.error?.message ?? "Save failed");
+      return;
     }
     router.refresh();
     onDone();
@@ -77,49 +91,62 @@ export function MonacoEditorPane({
 
   async function remove() {
     if (!selection.item) return;
+    if (!window.confirm(`Delete "${selection.item.name}"?`)) return;
+    setError(null);
     const path =
       selection.kind === "block"
         ? `/api/prompt-blocks/${selection.item.id}`
         : `/api/lorebooks/${selection.item.id}`;
-    await fetch(path, { method: "DELETE" });
+    const res = await fetch(path, { method: "DELETE" });
+    if (!res.ok) {
+      setError("Delete failed");
+      return;
+    }
     router.refresh();
     onDone();
   }
 
   return (
-    <div className="flex h-full flex-col gap-3 rounded-card border border-border bg-card p-4">
-      <div className="flex items-center gap-3">
-        <input
-          placeholder="Name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          className="flex-1 rounded-control border border-border bg-bg-subtle p-2 text-sm text-text-main"
-        />
+    <div className="flex h-full flex-col gap-3 rounded-card border border-border bg-card p-4 shadow-soft">
+      <div className="flex items-end gap-3">
+        <Field label={selection.kind === "block" ? "Block name" : "Lorebook name"} className="flex-1">
+          <input
+            placeholder="Name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className={inputClass}
+          />
+        </Field>
         {selection.kind === "block" && (
-          <select
-            value={blockKind}
-            onChange={(e) => setBlockKind(e.target.value as PromptBlockKind)}
-            className="rounded-control border border-border bg-bg-subtle p-2 text-sm text-text-main"
-          >
-            <option value="prepend">prepend</option>
-            <option value="append">append</option>
-          </select>
+          <Field label="Position">
+            <select
+              value={blockKind}
+              onChange={(e) => setBlockKind(e.target.value as PromptBlockKind)}
+              className={inputClass}
+            >
+              <option value="prepend">prepend</option>
+              <option value="append">append</option>
+            </select>
+          </Field>
         )}
         {selection.kind === "lorebook" && (
           <>
-            <select
-              value={scope}
-              onChange={(e) => setScope(e.target.value as LorebookScope)}
-              className="rounded-control border border-border bg-bg-subtle p-2 text-sm text-text-main"
-            >
-              <option value="character">character</option>
-              <option value="global">global</option>
-            </select>
-            <label className="flex items-center gap-1 text-sm text-text-main">
+            <Field label="Scope">
+              <select
+                value={scope}
+                onChange={(e) => setScope(e.target.value as LorebookScope)}
+                className={inputClass}
+              >
+                <option value="character">character</option>
+                <option value="global">global</option>
+              </select>
+            </Field>
+            <label className="flex h-[34px] items-center gap-1.5 text-sm text-text-main">
               <input
                 type="checkbox"
                 checked={enabled}
                 onChange={(e) => setEnabled(e.target.checked)}
+                className="accent-primary"
               />
               enabled
             </label>
@@ -130,32 +157,23 @@ export function MonacoEditorPane({
         <Editor
           height="100%"
           language={selection.kind === "lorebook" ? "javascript" : "plaintext"}
-          theme="vs-dark"
+          theme={editorTheme}
           value={content}
           onChange={(v) => setContent(v ?? "")}
+          options={{ minimap: { enabled: false }, fontSize: 12.5, padding: { top: 10 } }}
         />
       </div>
-      <div className="flex gap-2">
-        <button
-          onClick={save}
-          className="rounded-control bg-primary px-3 py-1.5 text-sm text-white hover:bg-primary-hover"
-        >
-          Save
-        </button>
+      {error && <p className="text-xs text-error">{error}</p>}
+      <div className="flex items-center gap-2">
+        <PrimaryButton onClick={save} disabled={saving}>
+          {saving ? "Saving…" : "Save"}
+        </PrimaryButton>
+        <GhostButton onClick={onDone}>Cancel</GhostButton>
         {selection.item && (
-          <button
-            onClick={remove}
-            className="rounded-control px-3 py-1.5 text-sm text-error hover:bg-bg-subtle"
-          >
-            Delete
-          </button>
+          <span className="ml-auto">
+            <DangerButton onClick={remove}>Delete</DangerButton>
+          </span>
         )}
-        <button
-          onClick={onDone}
-          className="rounded-control px-3 py-1.5 text-sm text-text-main hover:bg-bg-subtle"
-        >
-          Cancel
-        </button>
       </div>
     </div>
   );

@@ -4,6 +4,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { McpTransport } from "@/lib/db/types.ts";
+import { PrimaryButton, GhostButton, Field, inputClass, InlineError } from "../ui.tsx";
 
 const TRANSPORTS: McpTransport[] = ["http", "sse", "stdio"];
 
@@ -15,10 +16,14 @@ export function AddServerForm() {
   const [target, setTarget] = useState("");
   const [toolAllowlist, setToolAllowlist] = useState("");
   const [triggerPattern, setTriggerPattern] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    await fetch("/api/mcp-servers", {
+    setSaving(true);
+    setError(null);
+    const res = await fetch("/api/mcp-servers", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -29,6 +34,14 @@ export function AddServerForm() {
         triggerPattern: triggerPattern || undefined,
       }),
     });
+    setSaving(false);
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as {
+        error?: { message?: string };
+      } | null;
+      setError(body?.error?.message ?? "Failed to add server");
+      return;
+    }
     setOpen(false);
     setName("");
     setTarget("");
@@ -38,70 +51,76 @@ export function AddServerForm() {
   }
 
   if (!open) {
-    return (
-      <button
-        onClick={() => setOpen(true)}
-        className="rounded-control bg-primary px-3 py-1.5 text-sm text-white hover:bg-primary-hover"
-      >
-        Add server
-      </button>
-    );
+    return <PrimaryButton onClick={() => setOpen(true)}>Add server</PrimaryButton>;
   }
 
   return (
     <form
       onSubmit={onSubmit}
-      className="flex flex-col gap-2 rounded-card border border-border bg-card p-4"
+      className="flex w-full max-w-md flex-col gap-3 rounded-card border border-border bg-card p-4 shadow-soft"
     >
-      <input
-        placeholder="Name"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        className="rounded-control border border-border bg-bg-subtle p-2 text-sm text-text-main"
-      />
-      <select
-        value={transport}
-        onChange={(e) => setTransport(e.target.value as McpTransport)}
-        className="rounded-control border border-border bg-bg-subtle p-2 text-sm text-text-main"
-      >
-        {TRANSPORTS.map((t) => (
-          <option key={t} value={t}>
-            {t}
-          </option>
-        ))}
-      </select>
-      <input
-        placeholder={transport === "stdio" ? "Command, e.g. npx some-mcp-server" : "URL"}
-        value={target}
-        onChange={(e) => setTarget(e.target.value)}
-        className="rounded-control border border-border bg-bg-subtle p-2 text-sm text-text-main"
-      />
-      <input
-        placeholder="Tool allowlist (comma-separated, optional)"
-        value={toolAllowlist}
-        onChange={(e) => setToolAllowlist(e.target.value)}
-        className="rounded-control border border-border bg-bg-subtle p-2 text-sm text-text-main"
-      />
-      <input
-        placeholder="Trigger pattern (regex, optional)"
-        value={triggerPattern}
-        onChange={(e) => setTriggerPattern(e.target.value)}
-        className="rounded-control border border-border bg-bg-subtle p-2 text-sm text-text-main"
-      />
+      <div className="text-sm font-semibold text-text-main">New MCP server</div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Name">
+          <input
+            placeholder="web-search"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className={inputClass}
+          />
+        </Field>
+        <Field label="Transport">
+          <select
+            value={transport}
+            onChange={(e) => setTransport(e.target.value as McpTransport)}
+            className={inputClass}
+          >
+            {TRANSPORTS.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </div>
+      <Field label={transport === "stdio" ? "Command" : "URL"}>
+        <input
+          placeholder={transport === "stdio" ? "npx some-mcp-server" : "https://…"}
+          value={target}
+          onChange={(e) => setTarget(e.target.value)}
+          className={`${inputClass} font-mono text-[13px]`}
+        />
+      </Field>
+      {transport === "stdio" && (
+        <p className="rounded-control bg-warning/10 px-2.5 py-1.5 text-[11px] leading-relaxed text-warning">
+          stdio servers spawn a local process on this machine. You will be asked to confirm
+          before the first spawn.
+        </p>
+      )}
+      <Field label="Tool allowlist (optional)">
+        <input
+          placeholder="search, fetch — comma-separated"
+          value={toolAllowlist}
+          onChange={(e) => setToolAllowlist(e.target.value)}
+          className={inputClass}
+        />
+      </Field>
+      <Field label="Trigger pattern (optional)">
+        <input
+          placeholder="\bsearch\b — regex matched against the last user message"
+          value={triggerPattern}
+          onChange={(e) => setTriggerPattern(e.target.value)}
+          className={`${inputClass} font-mono text-[13px]`}
+        />
+      </Field>
+      <InlineError message={error} />
       <div className="flex gap-2">
-        <button
-          type="submit"
-          className="rounded-control bg-primary px-3 py-1.5 text-sm text-white hover:bg-primary-hover"
-        >
-          Save
-        </button>
-        <button
-          type="button"
-          onClick={() => setOpen(false)}
-          className="rounded-control px-3 py-1.5 text-sm text-text-main hover:bg-bg-subtle"
-        >
+        <PrimaryButton type="submit" disabled={saving}>
+          {saving ? "Saving…" : "Save server"}
+        </PrimaryButton>
+        <GhostButton type="button" onClick={() => setOpen(false)}>
           Cancel
-        </button>
+        </GhostButton>
       </div>
     </form>
   );

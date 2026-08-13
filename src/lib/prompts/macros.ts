@@ -11,8 +11,10 @@ export interface MacroContext {
 }
 
 export function substituteMacros(text: string, ctx: MacroContext): string {
+  // Function replacers, not string replacers: a char/user name containing `$&`, `$'`,
+  // or `` $` `` would otherwise expand as a replacement-pattern metacharacter.
   return text
-    .replace(/\{\{char\}\}/g, ctx.char)
-    .replace(/\{\{user\}\}/g, ctx.user)
+    .replace(/\{\{char\}\}/g, () => ctx.char)
+    .replace(/\{\{user\}\}/g, () => ctx.user)
     .replace(/\{\{newline\}\}/g, "\n");
 }

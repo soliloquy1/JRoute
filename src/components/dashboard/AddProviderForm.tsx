@@ -3,6 +3,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { PrimaryButton, GhostButton, Field, inputClass, InlineError } from "./ui.tsx";
 
 const WIRE_FORMATS = ["openai", "anthropic", "gemini"] as const;
 const KINDS = ["apikey", "oauth"] as const;
@@ -15,16 +16,24 @@ export function AddProviderForm() {
   const [wireFormat, setWireFormat] = useState<(typeof WIRE_FORMATS)[number]>("openai");
   const [kind, setKind] = useState<(typeof KINDS)[number]>("apikey");
   const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setSaving(true);
+    setError(null);
     const res = await fetch("/api/providers", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ id, name, baseUrl, wireFormat, kind, enabled: true }),
     });
+    setSaving(false);
     if (!res.ok) {
-      console.error("Failed to add provider", id);
+      const body = (await res.json().catch(() => null)) as {
+        error?: { message?: string };
+      } | null;
+      setError(body?.error?.message ?? "Failed to add provider");
       return;
     }
     setOpen(false);
@@ -35,75 +44,77 @@ export function AddProviderForm() {
   }
 
   if (!open) {
-    return (
-      <button
-        onClick={() => setOpen(true)}
-        className="rounded-control bg-primary px-3 py-1.5 text-sm text-white hover:bg-primary-hover"
-      >
-        Add provider
-      </button>
-    );
+    return <PrimaryButton onClick={() => setOpen(true)}>Add provider</PrimaryButton>;
   }
 
   return (
     <form
       onSubmit={onSubmit}
-      className="flex flex-col gap-2 rounded-card border border-border bg-card p-4"
+      className="flex w-full max-w-md flex-col gap-3 rounded-card border border-border bg-card p-4 shadow-soft"
     >
-      <input
-        placeholder="id (e.g. openai)"
-        value={id}
-        onChange={(e) => setId(e.target.value)}
-        className="rounded-control border border-border bg-bg-subtle p-2 text-sm text-text-main"
-      />
-      <input
-        placeholder="Display name"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        className="rounded-control border border-border bg-bg-subtle p-2 text-sm text-text-main"
-      />
-      <input
-        placeholder="Base URL"
-        value={baseUrl}
-        onChange={(e) => setBaseUrl(e.target.value)}
-        className="rounded-control border border-border bg-bg-subtle p-2 text-sm text-text-main"
-      />
-      <select
-        value={wireFormat}
-        onChange={(e) => setWireFormat(e.target.value as (typeof WIRE_FORMATS)[number])}
-        className="rounded-control border border-border bg-bg-subtle p-2 text-sm text-text-main"
-      >
-        {WIRE_FORMATS.map((w) => (
-          <option key={w} value={w}>
-            {w}
-          </option>
-        ))}
-      </select>
-      <select
-        value={kind}
-        onChange={(e) => setKind(e.target.value as (typeof KINDS)[number])}
-        className="rounded-control border border-border bg-bg-subtle p-2 text-sm text-text-main"
-      >
-        {KINDS.map((k) => (
-          <option key={k} value={k}>
-            {k}
-          </option>
-        ))}
-      </select>
+      <div className="text-sm font-semibold text-text-main">New provider</div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="ID">
+          <input
+            placeholder="openai"
+            value={id}
+            onChange={(e) => setId(e.target.value)}
+            className={inputClass}
+          />
+        </Field>
+        <Field label="Display name">
+          <input
+            placeholder="OpenAI"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className={inputClass}
+          />
+        </Field>
+      </div>
+      <Field label="Base URL">
+        <input
+          placeholder="https://api.openai.com/v1"
+          value={baseUrl}
+          onChange={(e) => setBaseUrl(e.target.value)}
+          className={`${inputClass} font-mono text-[13px]`}
+        />
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Wire format">
+          <select
+            value={wireFormat}
+            onChange={(e) => setWireFormat(e.target.value as (typeof WIRE_FORMATS)[number])}
+            className={inputClass}
+          >
+            {WIRE_FORMATS.map((w) => (
+              <option key={w} value={w}>
+                {w}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Auth kind">
+          <select
+            value={kind}
+            onChange={(e) => setKind(e.target.value as (typeof KINDS)[number])}
+            className={inputClass}
+          >
+            {KINDS.map((k) => (
+              <option key={k} value={k}>
+                {k}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </div>
+      <InlineError message={error} />
       <div className="flex gap-2">
-        <button
-          type="submit"
-          className="rounded-control bg-primary px-3 py-1.5 text-sm text-white hover:bg-primary-hover"
-        >
-          Save
-        </button>
-        <button
-          type="button"
-          onClick={() => setOpen(false)}
-          className="rounded-control px-3 py-1.5 text-sm text-text-main hover:bg-bg-subtle"
-        >
+        <PrimaryButton type="submit" disabled={saving}>
+          {saving ? "Saving…" : "Save provider"}
+        </PrimaryButton>
+        <GhostButton type="button" onClick={() => setOpen(false)}>
           Cancel
-        </button>
+        </GhostButton>
       </div>
     </form>
   );

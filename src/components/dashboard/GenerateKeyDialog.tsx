@@ -3,6 +3,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { PrimaryButton, GhostButton, Field, inputClass, InlineError } from "./ui.tsx";
 
 const TOOL_MODES = ["off", "trigger", "native"] as const;
 
@@ -13,6 +14,7 @@ export function GenerateKeyDialog() {
   const [toolMode, setToolMode] = useState<(typeof TOOL_MODES)[number]>("off");
   const [secret, setSecret] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -36,74 +38,89 @@ export function GenerateKeyDialog() {
     setSecret(null);
     setError(null);
     setLabel("");
+    setCopied(false);
+  }
+
+  async function copySecret() {
+    if (!secret) return;
+    try {
+      await navigator.clipboard.writeText(secret);
+      setCopied(true);
+    } catch {
+      setError("Could not copy — select and copy the key manually.");
+    }
   }
 
   if (!open) {
-    return (
-      <button
-        onClick={() => setOpen(true)}
-        className="rounded-control bg-primary px-3 py-1.5 text-sm text-white hover:bg-primary-hover"
-      >
-        Generate key
-      </button>
-    );
-  }
-
-  if (secret) {
-    return (
-      <div className="rounded-card border border-border bg-card p-4">
-        <p className="mb-2 text-sm text-text-main">Copy this now — it will not be shown again:</p>
-        <code className="block break-all rounded-control bg-bg-subtle p-2 text-xs text-text-main">
-          {secret}
-        </code>
-        <button
-          onClick={close}
-          className="mt-3 rounded-control px-3 py-1.5 text-sm text-text-main hover:bg-bg-subtle"
-        >
-          Done
-        </button>
-      </div>
-    );
+    return <PrimaryButton onClick={() => setOpen(true)}>Generate key</PrimaryButton>;
   }
 
   return (
-    <form
-      onSubmit={onSubmit}
-      className="flex flex-col gap-2 rounded-card border border-border bg-card p-4"
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={secret ? "Key generated" : "Generate API key"}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={(e) => {
+        // No backdrop-dismiss while the one-time secret is on screen — a stray click
+        // must not destroy the only copy the operator will ever see.
+        if (!secret && e.target === e.currentTarget) close();
+      }}
+      onKeyDown={(e) => {
+        if (!secret && e.key === "Escape") close();
+      }}
     >
-      <input
-        placeholder="Label"
-        value={label}
-        onChange={(e) => setLabel(e.target.value)}
-        className="rounded-control border border-border bg-bg-subtle p-2 text-sm text-text-main"
-      />
-      <select
-        value={toolMode}
-        onChange={(e) => setToolMode(e.target.value as (typeof TOOL_MODES)[number])}
-        className="rounded-control border border-border bg-bg-subtle p-2 text-sm text-text-main"
-      >
-        {TOOL_MODES.map((m) => (
-          <option key={m} value={m}>
-            {m}
-          </option>
-        ))}
-      </select>
-      {error && <p className="text-xs text-error">{error}</p>}
-      <div className="flex gap-2">
-        <button
-          type="submit"
-          className="rounded-control bg-primary px-3 py-1.5 text-sm text-white hover:bg-primary-hover"
-        >
-          Generate
-        </button>
-        <button
-          type="button"
-          onClick={close}
-          className="rounded-control px-3 py-1.5 text-sm text-text-main hover:bg-bg-subtle"
-        >
-          Cancel
-        </button>
+      <div className="w-full max-w-md rounded-card border border-border bg-card p-5 shadow-elevated">
+        {secret ? (
+          <>
+            <div className="mb-1 text-sm font-semibold text-text-main">Key generated</div>
+            <p className="mb-3 text-xs leading-relaxed text-text-muted">
+              Copy this now — it will not be shown again.
+            </p>
+            <code className="block break-all rounded-control border border-border bg-bg p-3 font-mono text-xs leading-relaxed text-text-main select-all">
+              {secret}
+            </code>
+            <InlineError message={error} />
+            <div className="mt-4 flex justify-end gap-2">
+              <GhostButton onClick={copySecret}>{copied ? "Copied" : "Copy"}</GhostButton>
+              <PrimaryButton onClick={close}>Done</PrimaryButton>
+            </div>
+          </>
+        ) : (
+          <form onSubmit={onSubmit} className="flex flex-col gap-3">
+            <div className="text-sm font-semibold text-text-main">Generate API key</div>
+            <Field label="Label">
+              <input
+                placeholder="e.g. sillytavern-desktop"
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                className={inputClass}
+                autoFocus
+              />
+            </Field>
+            <Field label="Tool mode">
+              <select
+                value={toolMode}
+                onChange={(e) => setToolMode(e.target.value as (typeof TOOL_MODES)[number])}
+                className={inputClass}
+              >
+                {TOOL_MODES.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <InlineError message={error} />
+            <div className="mt-1 flex justify-end gap-2">
+              <GhostButton type="button" onClick={close}>
+                Cancel
+              </GhostButton>
+              <PrimaryButton type="submit">Generate</PrimaryButton>
+            </div>
+          </form>
+        )}
       </div>
-    </form>
+    </div>
   );
 }

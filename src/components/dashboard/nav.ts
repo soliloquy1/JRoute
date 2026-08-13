@@ -1,32 +1,18 @@
 export interface NavItem {
   label: string;
   href: string;
+  icon: string; // Material Symbols ligature name
 }
 
-export interface NavGroup {
-  group: string;
-  items: NavItem[];
-}
-
-export const NAV_GROUPS: NavGroup[] = [
-  { group: "OVERVIEW", items: [{ label: "Dashboard", href: "/" }] },
-  { group: "PROVIDERS", items: [{ label: "Connections", href: "/providers" }] },
-  {
-    group: "KEYS & LOGS",
-    items: [
-      { label: "API keys", href: "/keys" },
-      { label: "Request log", href: "/keys#log" },
-    ],
-  },
-  {
-    group: "PROMPTS & LOREBOOKS",
-    items: [
-      { label: "Editor", href: "/prompts" },
-      { label: "ST Presets", href: "/rich-presets" },
-    ],
-  },
-  {
-    group: "MCP",
-    items: [{ label: "Servers", href: "/mcp" }],
-  },
+/**
+ * Flat, ordered nav. Presets (the SillyTavern kind) are first-class: they are the
+ * thing a chat actually runs through, so they sit directly under Providers.
+ */
+export const NAV_ITEMS: NavItem[] = [
+  { label: "Overview", href: "/", icon: "home" },
+  { label: "Providers", href: "/providers", icon: "cable" },
+  { label: "API Keys", href: "/keys", icon: "key" },
+  { label: "Presets", href: "/rich-presets", icon: "tune" },
+  { label: "Prompts & Lorebooks", href: "/prompts", icon: "edit_note" },
+  { label: "MCP Servers", href: "/mcp", icon: "dns" },
 ];

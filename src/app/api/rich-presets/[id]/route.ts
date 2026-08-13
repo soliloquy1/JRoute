@@ -2,8 +2,9 @@
 import { z } from "zod";
 import { authenticateDashboard } from "@/lib/auth/guard.ts";
 import { jsonError } from "@jroute/errors.ts";
-import { updateRichPreset, deleteRichPreset } from "@/lib/db/richPresets.ts";
+import { getRichPreset, updateRichPreset, deleteRichPreset } from "@/lib/db/richPresets.ts";
 import { RichPresetJsonSchema } from "@/lib/prompts/stPresetSchema.ts";
+import { describeIssues, parseIdParam } from "@/lib/api/validation.ts";
 
 const PatchSchema = z
   .object({
@@ -14,6 +15,21 @@ const PatchSchema = z
   })
   .refine((v) => Object.keys(v).length > 0, "At least one field required");
 
+export async function GET(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> }
+): Promise<Response> {
+  if (!authenticateDashboard(req)) return jsonError(401, "Unauthorized");
+  const id = parseIdParam((await params).id);
+  if (id === null) return jsonError(400, "Invalid id");
+  const preset = getRichPreset(id);
+  if (!preset) return jsonError(404, "Rich preset not found");
+  return new Response(JSON.stringify(preset), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -21,9 +37,13 @@ export async function PATCH(
   if (!authenticateDashboard(req)) return jsonError(401, "Unauthorized");
   try {
     const parsed = PatchSchema.safeParse(await req.json().catch(() => null));
-    if (!parsed.success) return jsonError(400, "Invalid request body");
-    const { id } = await params;
-    updateRichPreset(Number(id), parsed.data);
+    if (!parsed.success) {
+      return jsonError(400, `Invalid request body — ${describeIssues(parsed.error)}`);
+    }
+    const id = parseIdParam((await params).id);
+    if (id === null) return jsonError(400, "Invalid id");
+    if (!getRichPreset(id)) return jsonError(404, "Rich preset not found");
+    updateRichPreset(id, parsed.data);
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
       headers: { "content-type": "application/json" },
@@ -43,8 +63,10 @@ export async function DELETE(
 ): Promise<Response> {
   if (!authenticateDashboard(req)) return jsonError(401, "Unauthorized");
   try {
-    const { id } = await params;
-    deleteRichPreset(Number(id));
+    const id = parseIdParam((await params).id);
+    if (id === null) return jsonError(400, "Invalid id");
+    if (!getRichPreset(id)) return jsonError(404, "Rich preset not found");
+    deleteRichPreset(id);
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
       headers: { "content-type": "application/json" },
