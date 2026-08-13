@@ -1156,3 +1156,100 @@ test("toolMode: off (default) never calls runTriggerMode", async () => {
     "runTriggerMode must never be called when key.toolMode is not 'trigger'"
   );
 });
+
+// Plan 9 Task 5. These two tests use the file's existing issue/set/re-verify key pattern and
+// inline fetch-capture. The rich-preset assignment is spread onto the fetched record because
+// `verifyApiKey` maps `richPresetId: null` until Task 7 lands the real column mapping — the
+// spread is exactly the field Task 7 will later populate from the DB.
+test("richPresetId key: sampler params override client-sent values, blocks assembled from preset", async () => {
+  const { createRichPreset } = await import("../../src/lib/db/richPresets.ts");
+  createConnection("openai", "primary", "sk-1");
+  const richPresetId = createRichPreset("RP1", {
+    temperature: 0.42,
+    prompts: [
+      { identifier: "main", name: "Main", role: "system", content: "SYSTEM_MAIN" },
+      { identifier: "chatHistory", name: "History", role: "system", marker: true },
+    ],
+    prompt_order: [
+      {
+        character_id: 100001,
+        order: [
+          { identifier: "main", enabled: true },
+          { identifier: "chatHistory", enabled: true },
+        ],
+      },
+    ],
+  });
+  const issued = issueApiKey("rich-key");
+  const apiKey = { ...verifyApiKey(issued.secret)!, richPresetId, presetId: null };
+
+  let capturedBody: Record<string, unknown> | null = null;
+  const fetchImpl: typeof fetch = async (_url, init) => {
+    capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return new Response(JSON.stringify({ id: "x", choices: [], usage: {} }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const res = await handleChat(
+    post({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: "hi" }],
+      temperature: 0.99, // client-sent — must be overridden by the preset's 0.42
+    }),
+    apiKey,
+    { fetchImpl }
+  );
+  assert.equal(res.status, 200);
+  assert.ok(capturedBody !== null, "request must have reached upstream");
+  const sentBody = capturedBody as unknown as {
+    temperature: number;
+    messages: Array<{ role: string; content: unknown }>;
+  };
+  assert.equal(sentBody.temperature, 0.42, "preset sampler param must win over client value");
+  assert.ok(
+    sentBody.messages.some(
+      (m) => typeof m.content === "string" && m.content.includes("SYSTEM_MAIN")
+    ),
+    "preset prompt content must reach the upstream request"
+  );
+});
+
+test("richPresetId takes priority over presetId when a key somehow has both stored", async () => {
+  const { createRichPreset } = await import("../../src/lib/db/richPresets.ts");
+  const { createPreset } = await import("../../src/lib/db/presets.ts");
+  const { createPromptBlock } = await import("../../src/lib/db/promptBlocks.ts");
+  createConnection("openai", "primary", "sk-1");
+  const richPresetId = createRichPreset("RP2", {
+    prompts: [{ identifier: "main", name: "Main", role: "system", content: "RICH_WINS" }],
+    prompt_order: [{ character_id: 100001, order: [{ identifier: "main", enabled: true }] }],
+  });
+  const prependBlockId = createPromptBlock("simple-prepend", "prepend", "SIMPLE_MUST_NOT_APPEAR");
+  const presetId = createPreset("Simple", { prependBlockId });
+  const issued = issueApiKey("both-key");
+  const apiKey = { ...verifyApiKey(issued.secret)!, richPresetId, presetId };
+
+  let capturedBody: Record<string, unknown> | null = null;
+  const fetchImpl: typeof fetch = async (_url, init) => {
+    capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return new Response(JSON.stringify({ id: "x", choices: [], usage: {} }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const res = await handleChat(
+    post({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }] }),
+    apiKey,
+    { fetchImpl }
+  );
+  assert.equal(res.status, 200);
+  const sentBody = capturedBody as unknown as { messages: Array<{ content: unknown }> };
+  assert.ok(
+    sentBody.messages.some((m) => JSON.stringify(m.content).includes("RICH_WINS")),
+    "richPresetId branch must be taken, not the simple presetId branch"
+  );
+  assert.ok(
+    !sentBody.messages.some((m) => JSON.stringify(m.content).includes("SIMPLE_MUST_NOT_APPEAR")),
+    "the simple preset's blocks must NOT be applied when richPresetId is set"
+  );
+});

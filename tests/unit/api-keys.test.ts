@@ -92,3 +92,29 @@ test("DELETE /api/keys/:id revokes it", async () => {
   assert.equal(res.status, 200);
   assert.ok(!listApiKeys().some((k) => k.id === key.id));
 });
+
+test("PATCH /api/keys/:id accepts richPresetId and clears presetId", async () => {
+  const { issueApiKey, setApiKeyPreset, verifyApiKey } =
+    await import("../../src/lib/auth/apiKeys.ts");
+  const { createRichPreset } = await import("../../src/lib/db/richPresets.ts");
+  const { id, secret } = issueApiKey("test-key-2");
+  const presetId = createPreset("Simple2");
+  setApiKeyPreset(id, presetId);
+  const richPresetId = createRichPreset("Rich2", {
+    prompts: [{ identifier: "main", name: "Main", role: "system", content: "hi" }],
+    prompt_order: [{ character_id: 100001, order: [{ identifier: "main", enabled: true }] }],
+  });
+
+  const res = await keyById.PATCH(
+    new Request(`https://x/api/keys/${id}`, {
+      method: "PATCH",
+      headers: authHeaders,
+      body: JSON.stringify({ richPresetId }),
+    }),
+    { params: Promise.resolve({ id: String(id) }) }
+  );
+  assert.equal(res.status, 200);
+  const rec = verifyApiKey(secret);
+  assert.equal(rec?.richPresetId, richPresetId);
+  assert.equal(rec?.presetId, null);
+});

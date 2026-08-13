@@ -74,6 +74,12 @@ function mapGenerationConfig(
   if (typeof body.temperature === "number") cfg.temperature = body.temperature;
   if (typeof body.top_p === "number") cfg.topP = body.top_p;
   if (typeof body.top_k === "number") cfg.topK = body.top_k;
+  // The real Gemini generationConfig has no equivalent for min_p/top_a/repetition_penalty
+  // (OpenRouter/koboldcpp-style extensions) — deliberately not mapped, not an oversight.
+  if (typeof body.frequency_penalty === "number") cfg.frequencyPenalty = body.frequency_penalty;
+  if (typeof body.presence_penalty === "number") cfg.presencePenalty = body.presence_penalty;
+  if (typeof body.seed === "number") cfg.seed = body.seed;
+  if (typeof body.n === "number") cfg.candidateCount = body.n;
   // Gemini requires maxOutputTokens; the helper already defaulted `maxOutputTokens` to the
   // model ceiling, so this is always set.
   cfg.maxOutputTokens = maxOutputTokens;

@@ -1,13 +1,18 @@
-// src/app/api/keys/[id]/route.ts
+// src/app/api/rich-presets/[id]/route.ts
 import { z } from "zod";
 import { authenticateDashboard } from "@/lib/auth/guard.ts";
 import { jsonError } from "@jroute/errors.ts";
-import { setApiKeyPreset, setApiKeyRichPreset, revokeApiKey } from "@/lib/auth/apiKeys.ts";
+import { updateRichPreset, deleteRichPreset } from "@/lib/db/richPresets.ts";
+import { RichPresetJsonSchema } from "@/lib/prompts/stPresetSchema.ts";
 
-const PatchKeySchema = z.object({
-  presetId: z.number().int().nullable().optional(),
-  richPresetId: z.number().int().nullable().optional(),
-});
+const PatchSchema = z
+  .object({
+    name: z.string().min(1).optional(),
+    raw: RichPresetJsonSchema.optional(),
+    charName: z.string().optional(),
+    userName: z.string().optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, "At least one field required");
 
 export async function PATCH(
   req: Request,
@@ -15,21 +20,19 @@ export async function PATCH(
 ): Promise<Response> {
   if (!authenticateDashboard(req)) return jsonError(401, "Unauthorized");
   try {
-    const parsed = PatchKeySchema.safeParse(await req.json().catch(() => null));
+    const parsed = PatchSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return jsonError(400, "Invalid request body");
     const { id } = await params;
-    if (!Number.isInteger(Number(id))) return jsonError(400, "Invalid id");
-    if (parsed.data.richPresetId !== undefined) {
-      setApiKeyRichPreset(Number(id), parsed.data.richPresetId);
-    } else if (parsed.data.presetId !== undefined) {
-      setApiKeyPreset(Number(id), parsed.data.presetId);
-    }
+    updateRichPreset(Number(id), parsed.data);
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
       headers: { "content-type": "application/json" },
     });
   } catch (err) {
-    console.error("[api/keys/:id] unhandled error:", err);
+    if (err instanceof Error && "code" in err && err.code === "SQLITE_CONSTRAINT_UNIQUE") {
+      return jsonError(409, "A rich preset with this name already exists");
+    }
+    console.error("[api/rich-presets/:id] unhandled error:", err);
     return jsonError(500, "Internal error");
   }
 }
@@ -41,14 +44,13 @@ export async function DELETE(
   if (!authenticateDashboard(req)) return jsonError(401, "Unauthorized");
   try {
     const { id } = await params;
-    if (!Number.isInteger(Number(id))) return jsonError(400, "Invalid id");
-    revokeApiKey(Number(id));
+    deleteRichPreset(Number(id));
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
       headers: { "content-type": "application/json" },
     });
   } catch (err) {
-    console.error("[api/keys/:id] unhandled error:", err);
+    console.error("[api/rich-presets/:id] unhandled error:", err);
     return jsonError(500, "Internal error");
   }
 }

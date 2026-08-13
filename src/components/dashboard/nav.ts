@@ -20,7 +20,10 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     group: "PROMPTS & LOREBOOKS",
-    items: [{ label: "Editor", href: "/prompts" }],
+    items: [
+      { label: "Editor", href: "/prompts" },
+      { label: "ST Presets", href: "/rich-presets" },
+    ],
   },
   {
     group: "MCP",

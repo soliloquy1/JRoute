@@ -2,9 +2,17 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import type { ApiKeyRecord, Preset } from "@/lib/db/types.ts";
+import type { ApiKeyRecord, Preset, RichPreset } from "@/lib/db/types.ts";
 
-export function KeyTable({ keys, presets }: { keys: ApiKeyRecord[]; presets: Preset[] }) {
+export function KeyTable({
+  keys,
+  presets,
+  richPresets,
+}: {
+  keys: ApiKeyRecord[];
+  presets: Preset[];
+  richPresets: RichPreset[];
+}) {
   const router = useRouter();
 
   async function setPreset(id: number, presetId: number | null) {
@@ -15,6 +23,19 @@ export function KeyTable({ keys, presets }: { keys: ApiKeyRecord[]; presets: Pre
     });
     if (!res.ok) {
       console.error("Failed to set preset for key", id);
+      return;
+    }
+    router.refresh();
+  }
+
+  async function setRichPreset(id: number, richPresetId: number | null) {
+    const res = await fetch(`/api/keys/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ richPresetId }),
+    });
+    if (!res.ok) {
+      console.error("Failed to set rich preset for key", id);
       return;
     }
     router.refresh();
@@ -37,6 +58,7 @@ export function KeyTable({ keys, presets }: { keys: ApiKeyRecord[]; presets: Pre
           <th className="py-2">Label</th>
           <th>Tool mode</th>
           <th>Preset</th>
+          <th>ST Preset</th>
           <th></th>
         </tr>
       </thead>
@@ -53,6 +75,22 @@ export function KeyTable({ keys, presets }: { keys: ApiKeyRecord[]; presets: Pre
               >
                 <option value="">none</option>
                 {presets.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </td>
+            <td>
+              <select
+                value={k.richPresetId ?? ""}
+                onChange={(e) =>
+                  setRichPreset(k.id, e.target.value ? Number(e.target.value) : null)
+                }
+                className="rounded-control border border-border bg-bg-subtle p-1 text-xs text-text-main"
+              >
+                <option value="">none</option>
+                {richPresets.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name}
                   </option>

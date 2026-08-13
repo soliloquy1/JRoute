@@ -218,3 +218,34 @@ test("empty-content messages are stripped end-to-end", () => {
   );
   assert.deepEqual(out.contents, [{ role: "user", parts: [{ text: "real" }] }]);
 });
+
+test("maps frequency_penalty, presence_penalty, seed, and n onto generationConfig", () => {
+  const out = geminiConverter.convertRequest(
+    params({
+      body: {
+        messages: [],
+        frequency_penalty: 0.4,
+        presence_penalty: 0.2,
+        seed: 12345,
+        n: 2,
+      },
+    })
+  );
+  const cfg = out.generationConfig as Record<string, unknown>;
+  assert.equal(cfg.frequencyPenalty, 0.4);
+  assert.equal(cfg.presencePenalty, 0.2);
+  assert.equal(cfg.seed, 12345);
+  assert.equal(cfg.candidateCount, 2);
+});
+
+test("does not forward min_p, top_a, or repetition_penalty — no Gemini equivalent", () => {
+  const out = geminiConverter.convertRequest(
+    params({
+      body: { messages: [], min_p: 0.05, top_a: 0.1, repetition_penalty: 1.1 },
+    })
+  );
+  const cfg = out.generationConfig as Record<string, unknown>;
+  assert.equal("minP" in cfg, false);
+  assert.equal("topA" in cfg, false);
+  assert.equal("repetitionPenalty" in cfg, false);
+});
