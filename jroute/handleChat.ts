@@ -13,6 +13,8 @@ import { mapAnthropicErrorMessage } from "./convert/anthropic/errorMapping.ts";
 import { resolveSystemBlocks } from "../src/lib/prompts/assemble.ts";
 import { runLorebooksForRequest } from "../src/lib/lorebooks/runner.ts";
 import { getPreset } from "../src/lib/db/presets.ts";
+import { getRichPreset } from "../src/lib/db/richPresets.ts";
+import { assembleRichPreset } from "../src/lib/prompts/richAssemble.ts";
 import { runTriggerMode } from "../src/lib/mcp/trigger.ts";
 import { debugLog, debugLogError, redactHeaders } from "../src/lib/debugLog/logger.ts";
 import type { ApiKeyRecord } from "../src/lib/db/types.ts";
@@ -103,25 +105,35 @@ export async function handleChat(
   const blocks =
     deps.blocks ??
     (await (async () => {
+      const messages = parsed.data.messages as Array<{ role: string; content: unknown }>;
+      const rawSystemPrompt = extractRawSystemPrompt(messages);
+      const triggerBlocks =
+        key.toolMode === "trigger"
+          ? await runTriggerMode({ lastUserMessage: extractLastUserMessage(messages) })
+          : [];
+
+      if (key.richPresetId !== null) {
+        const richPreset = getRichPreset(key.richPresetId);
+        if (richPreset) {
+          const { blocks: richBlocks, samplerParams } = assembleRichPreset({
+            preset: richPreset,
+            messages,
+            rawSystemPrompt,
+          });
+          // Preset sampler params are authoritative over whatever the client sent
+          // (design spec §7.1) — mutating `body` here, ahead of the
+          // `converter.convertRequest({ ..., body, blocks })` call further below, is what
+          // makes the override take effect; that call site itself needs no change.
+          Object.assign(body, samplerParams);
+          return [...richBlocks, ...triggerBlocks];
+        }
+      }
+
       const systemBlocks = resolveSystemBlocks(key.presetId);
       const preset = key.presetId !== null ? getPreset(key.presetId) : null;
       const lorebookBlocks =
         preset && preset.lorebookIds.length > 0
-          ? runLorebooksForRequest({
-              lorebookIds: preset.lorebookIds,
-              messages: parsed.data.messages as Array<{ role: string; content: unknown }>,
-              rawSystemPrompt: extractRawSystemPrompt(
-                parsed.data.messages as Array<{ role: string; content?: unknown }>
-              ),
-            })
-          : [];
-      const triggerBlocks =
-        key.toolMode === "trigger"
-          ? await runTriggerMode({
-              lastUserMessage: extractLastUserMessage(
-                parsed.data.messages as Array<{ role: string; content?: unknown }>
-              ),
-            })
+          ? runLorebooksForRequest({ lorebookIds: preset.lorebookIds, messages, rawSystemPrompt })
           : [];
       return [...systemBlocks, ...lorebookBlocks, ...triggerBlocks];
     })());
