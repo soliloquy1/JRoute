@@ -25,6 +25,8 @@ function toRecord(row: ApiKeyRow): ApiKeyRecord {
     keyHash: row.key_hash,
     label: row.label,
     presetId: row.preset_id,
+    // Placeholder until the api-keys wiring task maps `row.rich_preset_id` for real.
+    richPresetId: null,
     toolMode: row.tool_mode as ToolMode,
     rateLimitPerMin: row.rate_limit_per_min,
     createdAt: row.created_at,

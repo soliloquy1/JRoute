@@ -1,3 +1,5 @@
+import type { RichPresetJson } from "../prompts/stPresetSchema.ts";
+
 export type WireFormat = "openai" | "anthropic" | "gemini";
 export type ProviderKind = "apikey" | "oauth";
 export type ToolMode = "native" | "trigger" | "off";
@@ -63,6 +65,16 @@ export interface Preset {
   lorebookIds: number[];
 }
 
+export interface RichPreset {
+  id: number;
+  name: string;
+  raw: RichPresetJson;
+  charName: string;
+  userName: string;
+  createdAt: number;
+  lorebookIds: number[];
+}
+
 export type McpTransport = "http" | "sse" | "stdio";
 
 export interface McpServer {
@@ -81,6 +93,7 @@ export interface ApiKeyRecord {
   keyHash: string;
   label: string;
   presetId: number | null;
+  richPresetId: number | null;
   toolMode: ToolMode;
   rateLimitPerMin: number;
   createdAt: number;
