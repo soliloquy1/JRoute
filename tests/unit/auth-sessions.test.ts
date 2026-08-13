@@ -10,8 +10,17 @@ const dir = mkdtempSync(join(tmpdir(), "jroute-test-"));
 process.env.DATA_DIR = dir;
 
 const { getDb, resetDb } = await import("../../src/lib/db/bootstrap.ts");
-const { seedInitialUser, verifyPassword, createSession, verifySession, destroySession } =
-  await import("../../src/lib/auth/sessions.ts");
+const {
+  seedInitialUser,
+  verifyPassword,
+  createSession,
+  verifySession,
+  destroySession,
+  getDashboardUser,
+  countDashboardUsers,
+  verifyCurrentPassword,
+  changePassword,
+} = await import("../../src/lib/auth/sessions.ts");
 
 after(() => {
   resetDb();
@@ -51,6 +60,41 @@ test("session token is not stored in plaintext", () => {
   // "something other than the token" (which any non-plaintext encoding would satisfy).
   assert.equal(row.token_hash, expectedHash);
   assert.notEqual(row.token_hash, token);
+});
+
+test("a freshly seeded user defaults to must_change = true", () => {
+  const id = seedInitialUser("must-change-check", "whatever-pw");
+  const user = getDashboardUser(id);
+  assert.equal(user?.username, "must-change-check");
+  assert.equal(user?.mustChange, true);
+});
+
+test("getDashboardUser returns null for a missing id", () => {
+  assert.equal(getDashboardUser(999999), null);
+});
+
+test("countDashboardUsers reflects the real row count", () => {
+  const before = countDashboardUsers();
+  seedInitialUser("count-check-" + before, "pw");
+  assert.equal(countDashboardUsers(), before + 1);
+});
+
+test("verifyCurrentPassword checks a specific user's password by id", async () => {
+  const id = seedInitialUser("current-pw-check", "the-real-password");
+  assert.equal(await verifyCurrentPassword(id, "the-real-password"), true);
+  assert.equal(await verifyCurrentPassword(id, "wrong-password"), false);
+  assert.equal(await verifyCurrentPassword(999999, "anything"), false);
+});
+
+test("changePassword updates the hash and clears must_change", async () => {
+  const id = seedInitialUser("change-pw-check", "old-password");
+  assert.equal(getDashboardUser(id)?.mustChange, true);
+
+  changePassword(id, "new-password");
+
+  assert.equal(getDashboardUser(id)?.mustChange, false);
+  assert.equal(await verifyPassword("change-pw-check", "old-password"), null);
+  assert.equal(await verifyPassword("change-pw-check", "new-password"), id);
 });
 
 test("expired session is rejected", () => {

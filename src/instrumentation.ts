@@ -10,6 +10,8 @@
 export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME === "nodejs") {
     const { markServerReady } = await import("@/lib/serverLifecycle");
+    const { seedInitialUserIfNeeded } = await import("@/lib/auth/bootstrap");
+    seedInitialUserIfNeeded();
     markServerReady();
   }
 }
