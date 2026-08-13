@@ -21,6 +21,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { cpSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import open from "open";
 
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const nextBin = join(packageRoot, "node_modules", ".bin", "next");
@@ -38,16 +39,47 @@ const standaloneDir = join(distDir, "standalone");
 const standaloneServer = join(standaloneDir, "server.cjs");
 const standaloneServerSrc = join(standaloneDir, "server.js");
 const DEFAULT_PORT = "20128";
+const port = process.env.PORT || DEFAULT_PORT;
 
-const [rawCommand, ...rest] = process.argv.slice(2);
+// `--no-open` is stripped before command detection, not left for `next dev`/`start`'s own
+// arg parsing to trip over, and not counted against `start`'s "no passthrough flags" rule.
+const rawArgs = process.argv.slice(2);
+const shouldOpenBrowser = !rawArgs.includes("--no-open");
+const filteredArgs = rawArgs.filter((a) => a !== "--no-open");
+
+const [rawCommand, ...rest] = filteredArgs;
 const knownCommands = new Set(["start", "dev", "build"]);
 const command = knownCommands.has(rawCommand) ? rawCommand : "start";
-const passthroughArgs = knownCommands.has(rawCommand) ? rest : process.argv.slice(2);
+const passthroughArgs = knownCommands.has(rawCommand) ? rest : filteredArgs;
+
+/**
+ * Polls /healthz until it reports ready (see src/instrumentation.ts — this is the exact
+ * signal that fixed /healthz always returning 503), then opens the default browser.
+ * Fire-and-forget: never awaited by the caller, and every failure is swallowed — a
+ * headless environment with no browser, or the server never coming up, must not crash or
+ * hang the CLI. Bounded at 60s so a server that never becomes healthy doesn't poll forever.
+ */
+async function openBrowserWhenReady() {
+  const url = `http://localhost:${port}/`;
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`http://localhost:${port}/healthz`);
+      if (res.ok) {
+        await open(url);
+        return;
+      }
+    } catch {
+      // Not up yet (or already gone) — keep polling until the deadline.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+}
 
 function runNext(nextArgs) {
-  const env = { ...process.env };
-  if (!env.PORT) env.PORT = DEFAULT_PORT;
+  const env = { ...process.env, PORT: port };
   const child = spawn(nextBin, nextArgs, { cwd: packageRoot, stdio: "inherit", env });
+  if (shouldOpenBrowser) openBrowserWhenReady().catch(() => {});
   child.on("exit", (code, signal) => {
     if (signal) process.kill(process.pid, signal);
     else process.exit(code ?? 0);
@@ -88,13 +120,13 @@ function ensureStandaloneAssets() {
 }
 
 function runStandaloneServer() {
-  const env = { ...process.env };
-  if (!env.PORT) env.PORT = DEFAULT_PORT;
+  const env = { ...process.env, PORT: port };
   const child = spawn(process.execPath, [standaloneServer], {
     cwd: packageRoot,
     stdio: "inherit",
     env,
   });
+  if (shouldOpenBrowser) openBrowserWhenReady().catch(() => {});
   child.on("exit", (code, signal) => {
     if (signal) process.kill(process.pid, signal);
     else process.exit(code ?? 0);
