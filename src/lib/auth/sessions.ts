@@ -16,6 +16,12 @@ interface SessionRow {
   expires_at: number;
 }
 
+export interface DashboardUser {
+  id: number;
+  username: string;
+  mustChange: boolean;
+}
+
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
@@ -59,4 +65,39 @@ export function verifySession(token: string): number | null {
 
 export function destroySession(token: string): void {
   getDb().prepare("DELETE FROM sessions WHERE token_hash = ?").run(hashToken(token));
+}
+
+export function getDashboardUser(id: number): DashboardUser | null {
+  const row = getDb()
+    .prepare("SELECT id, username, must_change FROM dashboard_users WHERE id = ?")
+    .get(id) as { id: number; username: string; must_change: number } | undefined;
+  return row ? { id: row.id, username: row.username, mustChange: row.must_change !== 0 } : null;
+}
+
+export function countDashboardUsers(): number {
+  const row = getDb().prepare("SELECT COUNT(*) as count FROM dashboard_users").get() as {
+    count: number;
+  };
+  return row.count;
+}
+
+/**
+ * Verifies a password against a KNOWN, already-authenticated user id — used by the
+ * change-password flow, where the caller already holds a valid session and only needs to
+ * confirm they still know their current password. Unlike verifyPassword(), this does not
+ * need the constant-time-for-absent-user treatment: the id comes from a verified session,
+ * not from unauthenticated user input, so there is no username-enumeration surface here.
+ */
+export async function verifyCurrentPassword(userId: number, password: string): Promise<boolean> {
+  const row = getDb()
+    .prepare("SELECT password_hash FROM dashboard_users WHERE id = ?")
+    .get(userId) as { password_hash: string } | undefined;
+  if (!row) return false;
+  return bcrypt.compare(password, row.password_hash);
+}
+
+export function changePassword(userId: number, newPassword: string): void {
+  getDb()
+    .prepare("UPDATE dashboard_users SET password_hash = ?, must_change = 0 WHERE id = ?")
+    .run(bcrypt.hashSync(newPassword, 12), userId);
 }
