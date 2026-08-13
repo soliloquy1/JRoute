@@ -22,6 +22,7 @@ import { cpSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import open from "open";
+import { parseArgs } from "./parseArgs.mjs";
 
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const nextBin = join(packageRoot, "node_modules", ".bin", "next");
@@ -41,36 +42,40 @@ const standaloneServerSrc = join(standaloneDir, "server.js");
 const DEFAULT_PORT = "20128";
 const port = process.env.PORT || DEFAULT_PORT;
 
-// `--no-open` is stripped before command detection, not left for `next dev`/`start`'s own
-// arg parsing to trip over, and not counted against `start`'s "no passthrough flags" rule.
-const rawArgs = process.argv.slice(2);
-const shouldOpenBrowser = !rawArgs.includes("--no-open");
-const filteredArgs = rawArgs.filter((a) => a !== "--no-open");
-
-const [rawCommand, ...rest] = filteredArgs;
-const knownCommands = new Set(["start", "dev", "build"]);
-const command = knownCommands.has(rawCommand) ? rawCommand : "start";
-const passthroughArgs = knownCommands.has(rawCommand) ? rest : filteredArgs;
+const { shouldOpenBrowser, command, passthroughArgs } = parseArgs(process.argv.slice(2));
 
 /**
  * Polls /healthz until it reports ready (see src/instrumentation.ts — this is the exact
  * signal that fixed /healthz always returning 503), then opens the default browser.
  * Fire-and-forget: never awaited by the caller, and every failure is swallowed — a
  * headless environment with no browser, or the server never coming up, must not crash or
- * hang the CLI. Bounded at 60s so a server that never becomes healthy doesn't poll forever.
+ * hang the CLI. Bounded at 60s TOTAL, enforced per-attempt too (each health-check fetch
+ * carries its own AbortSignal.timeout capped to the remaining budget) — otherwise a
+ * connection that's accepted but never responds could keep one `fetch` call alive past the
+ * documented 60s deadline, since Node's fetch has no short default timeout of its own.
  */
 async function openBrowserWhenReady() {
   const url = `http://localhost:${port}/`;
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
+    let ready = false;
     try {
-      const res = await fetch(`http://localhost:${port}/healthz`);
-      if (res.ok) {
-        await open(url);
-        return;
-      }
+      const remainingMs = Math.max(deadline - Date.now(), 100);
+      const res = await fetch(`http://localhost:${port}/healthz`, {
+        signal: AbortSignal.timeout(Math.min(3000, remainingMs)),
+      });
+      ready = res.ok;
     } catch {
-      // Not up yet (or already gone) — keep polling until the deadline.
+      // Not up yet, the probe itself timed out, or the server is already gone — keep
+      // polling until the deadline.
+    }
+    if (ready) {
+      try {
+        await open(url);
+      } catch {
+        // No GUI available, or the browser couldn't be launched — nothing more to try.
+      }
+      return;
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
