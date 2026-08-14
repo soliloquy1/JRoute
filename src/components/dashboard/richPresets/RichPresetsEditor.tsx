@@ -26,9 +26,11 @@ const SAMPLER_FIELDS: Array<{ key: keyof RichPresetJson; label: string; hint?: s
 export function RichPresetsEditor({
   presets,
   lorebooks,
+  keyLabelsByPreset,
 }: {
   presets: RichPreset[];
   lorebooks: Lorebook[];
+  keyLabelsByPreset: Record<number, string[]>;
 }) {
   const router = useRouter();
   const [selectedId, setSelectedId] = useState<number | null>(presets[0]?.id ?? null);
@@ -274,18 +276,45 @@ export function RichPresetsEditor({
         </span>
         {presets.length > 0 && (
           <div className="flex flex-col gap-0.5">
-            {presets.map((p) => (
-              <button
-                key={p.id}
-                onClick={() => select(p)}
-                className={cn(
-                  "rounded-control px-2 py-1.5 text-left text-sm text-text-main transition-colors hover:bg-bg-subtle",
-                  selectedId === p.id && "bg-bg-subtle font-medium"
-                )}
-              >
-                {p.name}
-              </button>
-            ))}
+            {presets.map((p) => {
+              const labels = keyLabelsByPreset[p.id] ?? [];
+              const active = labels.length > 0;
+              const status =
+                active && labels.length > 2
+                  ? `In use · ${labels.length} keys`
+                  : active
+                    ? `In use · ${labels.length} key (${labels.join(", ")})`
+                    : "Unused";
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => select(p)}
+                  title={active && labels.length > 2 ? labels.join(", ") : undefined}
+                  className={cn(
+                    "flex flex-col gap-0.5 rounded-control px-2 py-1.5 text-left text-sm text-text-main transition-colors hover:bg-bg-subtle",
+                    selectedId === p.id && "bg-bg-subtle font-medium"
+                  )}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <span
+                      className={cn(
+                        "h-1.5 w-1.5 shrink-0 rounded-full",
+                        active ? "bg-success" : "bg-text-muted"
+                      )}
+                    />
+                    {p.name}
+                  </span>
+                  <span
+                    className={cn(
+                      "pl-3 text-[11px]",
+                      active ? "text-success" : "text-text-muted"
+                    )}
+                  >
+                    {status}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         )}
         {importButton}
@@ -301,6 +330,22 @@ export function RichPresetsEditor({
             <p className="text-[11px] leading-relaxed text-text-muted">
               These override whatever the client sends.
             </p>
+            {(() => {
+              const labels = keyLabelsByPreset[preset.id] ?? [];
+              const active = labels.length > 0;
+              return (
+                <p
+                  className={cn(
+                    "text-[11px] leading-relaxed",
+                    active ? "text-success" : "text-text-muted"
+                  )}
+                >
+                  {active
+                    ? `Assigned to: ${labels.join(", ")}`
+                    : "Not assigned to any key — traffic passes through unchanged"}
+                </p>
+              );
+            })()}
             <div className="grid grid-cols-2 gap-2">
               {SAMPLER_FIELDS.map(({ key, label }) => (
                 <Field key={key} label={label}>
