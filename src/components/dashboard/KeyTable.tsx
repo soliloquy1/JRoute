@@ -3,7 +3,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import type { ApiKeyRecord, Preset, RichPreset } from "@/lib/db/types.ts";
+import type { ApiKeyRecord, Preset, RichPreset, LogitBiasPreset } from "@/lib/db/types.ts";
 import { EmptyState, InlineError } from "./ui.tsx";
 
 /**
@@ -33,10 +33,12 @@ export function KeyTable({
   keys,
   presets,
   richPresets,
+  logitBiasPresets,
 }: {
   keys: ApiKeyRecord[];
   presets: Preset[];
   richPresets: RichPreset[];
+  logitBiasPresets: LogitBiasPreset[];
 }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
@@ -56,6 +58,20 @@ export function KeyTable({
     });
     if (!res.ok) {
       setError(`Failed to update preset for key ${id}`);
+      return;
+    }
+    router.refresh();
+  }
+
+  async function setLogitBiasPreset(id: number, value: string) {
+    setError(null);
+    const res = await fetch(`/api/keys/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ logitBiasPresetId: value === "" ? null : Number(value) }),
+    });
+    if (!res.ok) {
+      setError(`Failed to update logit bias preset for key ${id}`);
       return;
     }
     router.refresh();
@@ -91,6 +107,7 @@ export function KeyTable({
             <th className="px-4 py-2.5 font-medium">Label</th>
             <th className="px-4 py-2.5 font-medium">Tool mode</th>
             <th className="px-4 py-2.5 font-medium">Preset</th>
+            <th className="px-4 py-2.5 font-medium">Logit bias</th>
             <th className="px-4 py-2.5" />
           </tr>
         </thead>
@@ -147,11 +164,33 @@ export function KeyTable({
                           <span className="text-text-muted">No preset</span>
                         </>
                       )}
-                    </div>
-                  );
-                })()}
-              </td>
-              <td className="px-4 py-2.5 text-right">
+                     </div>
+                   );
+                 })()}
+               </td>
+               <td className="px-4 py-2.5">
+                 <select
+                   value={k.logitBiasPresetId === null ? "" : String(k.logitBiasPresetId)}
+                   onChange={(e) => setLogitBiasPreset(k.id, e.target.value)}
+                   className="rounded-control border border-border-strong bg-card px-2 py-1 text-xs text-text-main focus:border-primary"
+                 >
+                   <option value="">none</option>
+                   {logitBiasPresets.map((p) => (
+                     <option key={p.id} value={String(p.id)}>
+                       {p.name}
+                     </option>
+                   ))}
+                 </select>
+                 {k.logitBiasPresetId !== null && (
+                   <div
+                     className="mt-1 text-[11px] text-warning"
+                     title="Applies only to OpenAI-wire-format models — silently skipped otherwise."
+                   >
+                     OpenAI-wire only
+                   </div>
+                 )}
+               </td>
+               <td className="px-4 py-2.5 text-right">
                 <button
                   onClick={() => revoke(k.id, k.label)}
                   className="rounded-control px-2 py-1 text-xs text-text-muted transition-colors hover:bg-error/10 hover:text-error"

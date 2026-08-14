@@ -1,6 +1,7 @@
 import { listApiKeys } from "@/lib/auth/apiKeys.ts";
 import { listPresets } from "@/lib/db/presets.ts";
 import { listRichPresets } from "@/lib/db/richPresets.ts";
+import { listLogitBiasPresets } from "@/lib/db/logitBiasPresets.ts";
 import { getRecentUsage, getUsageByApiKey } from "@/lib/db/usageLogs.ts";
 import { KeyTable } from "@/components/dashboard/KeyTable.tsx";
 import { GenerateKeyDialog } from "@/components/dashboard/GenerateKeyDialog.tsx";
@@ -16,6 +17,7 @@ export default async function KeysPage({
   const keys = listApiKeys();
   const presets = listPresets();
   const richPresets = listRichPresets();
+  const logitBiasPresets = listLogitBiasPresets();
   const logs = apiKeyId ? getUsageByApiKey(Number(apiKeyId), 50) : getRecentUsage(50);
   const filterKey = apiKeyId ? keys.find((k) => k.id === Number(apiKeyId)) : null;
 
@@ -26,7 +28,12 @@ export default async function KeysPage({
           <SectionTitle>Keys</SectionTitle>
           <GenerateKeyDialog />
         </div>
-        <KeyTable keys={keys} presets={presets} richPresets={richPresets} />
+        <KeyTable
+          keys={keys}
+          presets={presets}
+          richPresets={richPresets}
+          logitBiasPresets={logitBiasPresets}
+        />
       </section>
 
       <section id="log" className="flex flex-col gap-3">
