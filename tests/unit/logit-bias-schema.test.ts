@@ -13,8 +13,12 @@ test("LogitBiasEntrySchema rejects empty text", () => {
   assert.equal(parsed.success, false);
 });
 
-test("LogitBiasEntrySchema rejects non-integer or out-of-range value at the type level", () => {
+test("LogitBiasEntrySchema rejects a non-integer value at the type level", () => {
   assert.equal(LogitBiasEntrySchema.safeParse({ text: "x", value: 1.5 }).success, false);
+});
+
+test("LogitBiasEntrySchema accepts an out-of-range value (clamped on write, not rejected)", () => {
+  assert.equal(LogitBiasEntrySchema.safeParse({ text: "x", value: 999 }).success, true);
 });
 
 test("clampBiasValue clamps above 100 down to 100", () => {
