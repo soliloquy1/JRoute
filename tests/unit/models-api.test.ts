@@ -175,6 +175,49 @@ test("import-models pulls and stores openai models", async () => {
   }
 });
 
+test("POST /api/models accepts a gateway-style modelId containing '/'", async () => {
+  seed("openrouter");
+  const res = await modelsRoute.POST(
+    new Request("https://x/api/models", {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({ providerId: "openrouter", modelId: "openai/gpt-4o" }),
+    })
+  );
+  assert.equal(res.status, 200);
+  assert.equal(modelExists("openrouter", "openai/gpt-4o"), true);
+});
+
+test("import-models pulls OpenRouter-style ids that contain '/'", async () => {
+  seed("openrouter");
+  createConnection("openrouter", "main", "sk-or-test");
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      data: [{ id: "openai/gpt-4o" }, { id: "meta-llama/llama-3.1-70b-instruct" }],
+    }),
+  })) as unknown as typeof fetch;
+  try {
+    const res = await importRoute.POST(
+      new Request("https://x/api/providers/openrouter/import-models", {
+        method: "POST",
+        headers: authHeaders,
+      }),
+      { params: Promise.resolve({ id: "openrouter" }) }
+    );
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { imported: number; total: number };
+    assert.equal(body.imported, 2);
+    assert.equal(body.total, 2);
+    assert.equal(modelExists("openrouter", "openai/gpt-4o"), true);
+    assert.equal(modelExists("openrouter", "meta-llama/llama-3.1-70b-instruct"), true);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
 test("import-models pulls gemini models (strips models/ prefix)", async () => {
   seed("google", "gemini");
   createConnection("google", "main", "key-test");

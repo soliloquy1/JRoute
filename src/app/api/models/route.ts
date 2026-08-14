@@ -7,10 +7,10 @@ import { modelExists, createModel } from "@/lib/db/models.ts";
 
 const CreateModelSchema = z.object({
   providerId: z.string().min(1),
-  modelId: z
-    .string()
-    .min(1)
-    .refine((v) => !v.includes("/"), "Model id must not contain '/'"),
+  // Native ids may contain "/" (aggregate gateways like OpenRouter, e.g.
+  // "openai/gpt-4o") — resolveClientModel() only splits on the FIRST "/",
+  // owned by the provider's model_prefix, so the rest is free to contain more.
+  modelId: z.string().min(1),
   maxTokens: z.number().int().positive().optional(),
   enabled: z.boolean().optional(),
 });

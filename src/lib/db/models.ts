@@ -158,9 +158,11 @@ export function importModels(
     }
     return count;
   });
-  const rows = items
-    .filter((i) => i.id && !i.id.includes("/"))
-    .map((i) => ({ id: i.id, maxTokens: i.maxTokens ?? 8192 }));
+  // Native ids may themselves contain "/" (aggregate gateways like OpenRouter,
+  // e.g. "openai/gpt-4o"). resolveClientModel() splits on the FIRST "/" only —
+  // the provider's own model_prefix owns that split — so the rest of the id is
+  // free to contain more slashes.
+  const rows = items.filter((i) => i.id).map((i) => ({ id: i.id, maxTokens: i.maxTokens ?? 8192 }));
   if (rows.length === 0) return 0;
   return tx(rows);
 }
