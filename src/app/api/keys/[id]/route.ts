@@ -2,7 +2,12 @@
 import { z } from "zod";
 import { authenticateDashboard } from "@/lib/auth/guard.ts";
 import { jsonError } from "@jroute/errors.ts";
-import { setApiKeyPreset, setApiKeyRichPreset, setApiKeyLogitBiasPreset, revokeApiKey } from "@/lib/auth/apiKeys.ts";
+import {
+  setApiKeyPreset,
+  setApiKeyRichPreset,
+  setApiKeyLogitBiasPreset,
+  revokeApiKey,
+} from "@/lib/auth/apiKeys.ts";
 import { parseIdParam } from "@/lib/api/validation.ts";
 
 const PatchKeySchema = z.object({

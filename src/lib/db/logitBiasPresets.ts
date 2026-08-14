@@ -30,9 +30,7 @@ function toLogitBiasPreset(row: LogitBiasPresetRow): LogitBiasPreset {
 export function createLogitBiasPreset(name: string, entries: LogitBiasEntry[]): number {
   const clamped = parseAndClampEntries(entries);
   const info = getDb()
-    .prepare(
-      `INSERT INTO logit_bias_presets (name, entries, created_at) VALUES (?, ?, ?)`
-    )
+    .prepare(`INSERT INTO logit_bias_presets (name, entries, created_at) VALUES (?, ?, ?)`)
     .run(name, JSON.stringify(clamped), Date.now());
   return Number(info.lastInsertRowid);
 }

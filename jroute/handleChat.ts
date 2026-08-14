@@ -117,7 +117,11 @@ export async function handleChat(
       if (key.richPresetId !== null) {
         const richPreset = getRichPreset(key.richPresetId);
         if (richPreset) {
-          const { blocks: richBlocks, samplerParams, consumedSystemPrompt } = assembleRichPreset({
+          const {
+            blocks: richBlocks,
+            samplerParams,
+            consumedSystemPrompt,
+          } = assembleRichPreset({
             preset: richPreset,
             messages,
             rawSystemPrompt,

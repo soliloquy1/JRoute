@@ -164,33 +164,33 @@ export function KeyTable({
                           <span className="text-text-muted">No preset</span>
                         </>
                       )}
-                     </div>
-                   );
-                 })()}
-               </td>
-               <td className="px-4 py-2.5">
-                 <select
-                   value={k.logitBiasPresetId === null ? "" : String(k.logitBiasPresetId)}
-                   onChange={(e) => setLogitBiasPreset(k.id, e.target.value)}
-                   className="rounded-control border border-border-strong bg-card px-2 py-1 text-xs text-text-main focus:border-primary"
-                 >
-                   <option value="">none</option>
-                   {logitBiasPresets.map((p) => (
-                     <option key={p.id} value={String(p.id)}>
-                       {p.name}
-                     </option>
-                   ))}
-                 </select>
-                 {k.logitBiasPresetId !== null && (
-                   <div
-                     className="mt-1 text-[11px] text-warning"
-                     title="Applies only to OpenAI-wire-format models — silently skipped otherwise."
-                   >
-                     OpenAI-wire only
-                   </div>
-                 )}
-               </td>
-               <td className="px-4 py-2.5 text-right">
+                    </div>
+                  );
+                })()}
+              </td>
+              <td className="px-4 py-2.5">
+                <select
+                  value={k.logitBiasPresetId === null ? "" : String(k.logitBiasPresetId)}
+                  onChange={(e) => setLogitBiasPreset(k.id, e.target.value)}
+                  className="rounded-control border border-border-strong bg-card px-2 py-1 text-xs text-text-main focus:border-primary"
+                >
+                  <option value="">none</option>
+                  {logitBiasPresets.map((p) => (
+                    <option key={p.id} value={String(p.id)}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+                {k.logitBiasPresetId !== null && (
+                  <div
+                    className="mt-1 text-[11px] text-warning"
+                    title="Applies only to OpenAI-wire-format models — silently skipped otherwise."
+                  >
+                    OpenAI-wire only
+                  </div>
+                )}
+              </td>
+              <td className="px-4 py-2.5 text-right">
                 <button
                   onClick={() => revoke(k.id, k.label)}
                   className="rounded-control px-2 py-1 text-xs text-text-muted transition-colors hover:bg-error/10 hover:text-error"
