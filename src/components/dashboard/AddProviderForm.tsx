@@ -15,6 +15,7 @@ export function AddProviderForm() {
   const [baseUrl, setBaseUrl] = useState("");
   const [wireFormat, setWireFormat] = useState<(typeof WIRE_FORMATS)[number]>("openai");
   const [kind, setKind] = useState<(typeof KINDS)[number]>("apikey");
+  const [modelPrefix, setModelPrefix] = useState("");
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -26,7 +27,7 @@ export function AddProviderForm() {
     const res = await fetch("/api/providers", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ id, name, baseUrl, wireFormat, kind, enabled: true }),
+      body: JSON.stringify({ id, name, baseUrl, wireFormat, kind, enabled: true, modelPrefix }),
     });
     setSaving(false);
     if (!res.ok) {
@@ -107,6 +108,14 @@ export function AddProviderForm() {
           </select>
         </Field>
       </div>
+      <Field label="Model prefix (optional)">
+        <input
+          placeholder="or  (requests become or/modelname)"
+          value={modelPrefix}
+          onChange={(e) => setModelPrefix(e.target.value)}
+          className={`${inputClass} font-mono text-[13px]`}
+        />
+      </Field>
       <InlineError message={error} />
       <div className="flex gap-2">
         <PrimaryButton type="submit" disabled={saving}>

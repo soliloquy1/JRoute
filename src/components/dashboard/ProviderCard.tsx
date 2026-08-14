@@ -4,6 +4,7 @@ import type { Connection, Provider } from "@/lib/db/types.ts";
 import { ConnectionList } from "./ConnectionList.tsx";
 import { AddConnectionForm } from "./AddConnectionForm.tsx";
 import { RemoveProviderButton } from "./RemoveProviderButton.tsx";
+import { ProviderPrefixEditor } from "./ProviderPrefixEditor.tsx";
 
 // Plain (non-component) helper so the impure `Date.now()` read happens outside
 // the component render body — keeps `react-hooks/purity` happy while still
@@ -33,6 +34,9 @@ export function ProviderCard({ provider }: { provider: Provider }) {
           </div>
           <div className="mt-0.5 truncate font-mono text-[11px] text-text-muted">
             {provider.baseUrl} · {provider.wireFormat}
+          </div>
+          <div className="mt-1">
+            <ProviderPrefixEditor providerId={provider.id} prefix={provider.modelPrefix} />
           </div>
         </div>
         <RemoveProviderButton providerId={provider.id} />

@@ -1,5 +1,6 @@
 // src/lib/db/providers.ts
 import { getDb } from "./bootstrap.ts";
+import { seedDefaultModels } from "./models.ts";
 import type { Provider, ProviderKind, WireFormat } from "./types.ts";
 
 interface ProviderRow {
@@ -9,6 +10,7 @@ interface ProviderRow {
   base_url: string;
   wire_format: string;
   enabled: number;
+  model_prefix: string;
 }
 
 function toProvider(row: ProviderRow): Provider {
@@ -19,7 +21,21 @@ function toProvider(row: ProviderRow): Provider {
     baseUrl: row.base_url,
     wireFormat: row.wire_format as WireFormat,
     enabled: row.enabled !== 0,
+    modelPrefix: row.model_prefix ?? "",
   };
+}
+
+/**
+ * A non-empty model prefix must be unique across providers — it is the routing key
+ * that binds a `prefix/nativeId` request to exactly one provider. Returns the id of
+ * the provider already using `prefix` (other than `exceptId`), or null if free.
+ */
+export function prefixOwner(prefix: string, exceptId?: string): string | null {
+  if (!prefix) return null;
+  const row = getDb()
+    .prepare("SELECT id FROM providers WHERE model_prefix = ? AND id != ? LIMIT 1")
+    .get(prefix, exceptId ?? "") as { id: string } | undefined;
+  return row ? row.id : null;
 }
 
 export function listProviders(): Provider[] {
@@ -33,21 +49,51 @@ export function getProvider(id: string): Provider | null {
   return row ? toProvider(row) : null;
 }
 
+export function getProviderByPrefix(prefix: string): Provider | null {
+  if (!prefix) return null;
+  const row = getDb().prepare("SELECT * FROM providers WHERE model_prefix = ?").get(prefix) as
+    ProviderRow | undefined;
+  return row ? toProvider(row) : null;
+}
+
 export function deleteProvider(id: string): void {
   getDb().prepare("DELETE FROM providers WHERE id = ?").run(id);
 }
 
 export function upsertProvider(p: Provider): void {
-  getDb()
-    .prepare(
-      `INSERT INTO providers (id, name, kind, base_url, wire_format, enabled)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET
-         name = excluded.name,
-         kind = excluded.kind,
-         base_url = excluded.base_url,
-         wire_format = excluded.wire_format,
-         enabled = excluded.enabled`
-    )
-    .run(p.id, p.name, p.kind, p.baseUrl, p.wireFormat, p.enabled ? 1 : 0);
+  if (p.modelPrefix) {
+    const owner = prefixOwner(p.modelPrefix, p.id);
+    if (owner) {
+      throw new Error(`Model prefix "${p.modelPrefix}" is already used by provider "${owner}"`);
+    }
+  }
+  const isNew = !getProvider(p.id);
+  try {
+    getDb()
+      .prepare(
+        `INSERT INTO providers (id, name, kind, base_url, wire_format, enabled, model_prefix)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           name = excluded.name,
+           kind = excluded.kind,
+           base_url = excluded.base_url,
+           wire_format = excluded.wire_format,
+           enabled = excluded.enabled,
+           model_prefix = excluded.model_prefix`
+      )
+      .run(p.id, p.name, p.kind, p.baseUrl, p.wireFormat, p.enabled ? 1 : 0, p.modelPrefix ?? "");
+  } catch (e) {
+    // Backstop for the prefixOwner() check above: that check-then-insert is not atomic,
+    // so a concurrent writer can still race past it. The unique index (migration 006) is
+    // the real guarantee; translate its constraint violation into the same error shape.
+    if (e instanceof Error && /UNIQUE constraint failed.*model_prefix/.test(e.message)) {
+      throw new Error(`Model prefix "${p.modelPrefix}" is already used by another provider`);
+    }
+    throw e;
+  }
+  // Keep legacy convenience: a freshly added default provider (openai/anthropic/google)
+  // automatically gets its well-known models, just like the old static MODEL_MAP. Only
+  // on creation — an edit to an existing provider (e.g. changing its prefix) shouldn't
+  // re-run the full default-seed scan on every save.
+  if (isNew) seedDefaultModels();
 }

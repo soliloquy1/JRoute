@@ -11,6 +11,12 @@ const ProviderSchema = z.object({
   baseUrl: z.string().url(),
   wireFormat: z.enum(["openai", "anthropic", "gemini"]),
   enabled: z.boolean(),
+  modelPrefix: z
+    .string()
+    .regex(/^[a-z0-9]*$/, "Model prefix must be empty or lowercase alphanumerics")
+    .refine((v) => !v.includes("/"), "Model prefix must not contain '/'")
+    .optional()
+    .default(""),
 });
 
 export async function POST(req: Request): Promise<Response> {
@@ -18,7 +24,11 @@ export async function POST(req: Request): Promise<Response> {
   try {
     const parsed = ProviderSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return jsonError(400, "Invalid request body");
-    upsertProvider(parsed.data);
+    try {
+      upsertProvider(parsed.data);
+    } catch (e) {
+      return jsonError(400, (e as Error).message);
+    }
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
       headers: { "content-type": "application/json" },
