@@ -48,8 +48,10 @@ function applyPrependBlocks(messages: OpenAIMessage[], prependText: string): Ope
 }
 
 export const openaiConverter: RequestConverter = {
-  convertRequest({ body, blocks }: ConvertRequestParams): Record<string, unknown> {
-    if (blocks.length === 0) return body;
+  convertRequest({ model, body, blocks }: ConvertRequestParams): Record<string, unknown> {
+    // `model` is the resolved native id (prefix stripped); always send that upstream,
+    // never the client's possibly-prefixed id that lives on body.model.
+    if (blocks.length === 0) return { ...body, model };
 
     const { systemBlocks, injections } = partitionBlocks(blocks);
     const prependParts: string[] = [];
@@ -89,6 +91,6 @@ export const openaiConverter: RequestConverter = {
       messages = [...messages, { role: "system", content: appendParts.join(MERGE_SEPARATOR) }];
     }
 
-    return { ...body, messages };
+    return { ...body, model, messages };
   },
 };

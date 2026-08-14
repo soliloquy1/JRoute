@@ -66,11 +66,16 @@ export function ModelsManager({ initialModels, providers }: ModelsManagerProps) 
       `/api/models/${encodeURIComponent(m.providerId)}/${encodeURIComponent(m.modelId)}`,
       { method: "DELETE" }
     );
-    if (res.ok) await refresh();
+    if (res.ok) {
+      await refresh();
+    } else {
+      const b = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
+      setError(b?.error?.message ?? "Failed to delete model");
+    }
   }
 
   async function toggleEnabled(m: Model) {
-    await fetch(
+    const res = await fetch(
       `/api/models/${encodeURIComponent(m.providerId)}/${encodeURIComponent(m.modelId)}`,
       {
         method: "PATCH",
@@ -78,7 +83,12 @@ export function ModelsManager({ initialModels, providers }: ModelsManagerProps) 
         body: JSON.stringify({ enabled: !m.enabled }),
       }
     );
-    await refresh();
+    if (res.ok) {
+      await refresh();
+    } else {
+      const b = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
+      setError(b?.error?.message ?? "Failed to update model");
+    }
   }
 
   async function importFrom(provider: Provider) {

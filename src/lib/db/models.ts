@@ -189,6 +189,7 @@ export function resolveClientModel(clientModel: string): ResolvedClientModel | n
        FROM models m
        JOIN providers p ON p.id = m.provider_id
        WHERE m.model_id = ? AND m.enabled = 1 AND p.model_prefix = '' AND p.enabled = 1
+       ORDER BY p.id
        LIMIT 1`
     )
     .get(clientModel) as { provider_id: string; model_id: string; max_tokens: number } | undefined;
