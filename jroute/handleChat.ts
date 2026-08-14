@@ -186,6 +186,11 @@ export async function handleChat(
     if (provider.wireFormat === "openai") {
       const biasPreset = getLogitBiasPreset(key.logitBiasPresetId);
       if (biasPreset) {
+        // The operator-assigned preset is authoritative over whatever the client sent
+        // (design spec §3/§5: the bias map is an operator-side key setting, computed fresh
+        // per request from the preset's entries). Assigning — not merging — is deliberate:
+        // a client-supplied `logit_bias` is overwritten wholesale, so a JanitorAI user
+        // cannot un-ban a word the operator banned by sending their own map.
         body.logit_bias = computeLogitBias(biasPreset.entries);
         debugLog("logitBias.applied", {
           requestId,

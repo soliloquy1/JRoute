@@ -82,6 +82,33 @@ test("handleChat injects logit_bias into the upstream body for an openai-wireFor
   assert.deepEqual(capturedBody!.logit_bias, { "82": -80, "44806": -80 });
 });
 
+test("handleChat lets the preset's logit_bias override a client-supplied map", async () => {
+  // Spec §3/§5: the bias map is an operator-side key setting, so the preset is
+  // authoritative — a client sending its own logit_bias cannot un-ban the operator's
+  // tokens, and its map is replaced wholesale rather than merged.
+  createConnection("openai", "primary", "sk-test");
+  const apiKey = await keyWithBiasPreset();
+  let capturedBody: Record<string, unknown> | null = null;
+  const fetchImpl: typeof fetch = async (_url, init) => {
+    capturedBody = JSON.parse(String(init?.body));
+    return new Response(JSON.stringify({ id: "x", choices: [], usage: {} }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  await handleChat(
+    post({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: "hi" }],
+      logit_bias: { "82": 100, "999": 50 },
+    }),
+    apiKey!,
+    { fetchImpl }
+  );
+  assert.ok(capturedBody);
+  assert.deepEqual(capturedBody!.logit_bias, { "82": -80, "44806": -80 });
+});
+
 test("handleChat does not inject logit_bias for a non-openai wireFormat target", async () => {
   createConnection("anthropic", "primary", "sk-test");
   const apiKey = await keyWithBiasPreset();
