@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { runMigrations } from "./migrationRunner.ts";
+import { seedDefaultModels } from "./models.ts";
 import type { SqliteAdapter } from "./adapters/types.ts";
 
 let instance: SqliteAdapter | null = null;
@@ -23,6 +24,7 @@ export function getDb(): SqliteAdapter {
   db.pragma("busy_timeout = 2000");
   runMigrations(db, { isNewDb });
   instance = db;
+  seedDefaultModels();
   return instance;
 }
 

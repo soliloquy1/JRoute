@@ -11,6 +11,10 @@ export interface Provider {
   baseUrl: string;
   wireFormat: WireFormat;
   enabled: boolean;
+  /** User-chosen routing key for this provider's models. A model is requested as
+   *  `modelPrefix/nativeId` (e.g. `or/gpt-5.6-sol`) and routes only to this provider.
+   *  Empty string means the provider serves bare (unprefixed) model ids. */
+  modelPrefix?: string;
 }
 
 export interface Connection {

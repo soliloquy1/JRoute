@@ -164,9 +164,13 @@ export async function handleChat(
   }
   const provider = resolved.provider;
   const providerId = provider.id;
+  // The client may send a prefixed id (`or/gpt-5.6-sol`); the upstream must receive
+  // the native id (`gpt-5.6-sol`). `requestedModel` is preserved for logging only.
+  const upstreamModel = resolved.nativeModel;
   debugLog("model.resolved", {
     requestId,
     requestedModel,
+    upstreamModel,
     providerId,
     wireFormat: provider.wireFormat,
     maxTokens: resolved.maxTokens,
@@ -194,7 +198,7 @@ export async function handleChat(
   // the provider for the whole request — the loop never re-resolves, which is what makes
   // cross-format fallback structurally impossible.
   const upstreamBody = converter.convertRequest({
-    model: requestedModel,
+    model: upstreamModel,
     maxTokens: resolved.maxTokens,
     body,
     blocks,
@@ -240,7 +244,7 @@ export async function handleChat(
         connection,
         body: upstreamBody,
         signal: req.signal,
-        model: requestedModel,
+        model: upstreamModel,
         // The stream flag comes from the CLIENT request body, NOT from `upstreamBody`: the
         // Gemini converter strips `stream` from the converted body (streaming is a URL concern
         // there), so `upstreamBody.stream` is always undefined and the streaming URL would
@@ -285,7 +289,7 @@ export async function handleChat(
             apiKeyId: key.id,
             providerId,
             connectionId: connection.id,
-            model: requestedModel,
+            model: upstreamModel,
             promptTokens: null,
             outputTokens: null,
             latencyMs: Date.now() - startedAt,
@@ -326,7 +330,7 @@ export async function handleChat(
             apiKeyId: key.id,
             providerId,
             connectionId: connection.id,
-            model: requestedModel,
+            model: upstreamModel,
             promptTokens: completion.promptTokens,
             outputTokens: completion.outputTokens,
             latencyMs: Date.now() - startedAt,
@@ -359,7 +363,7 @@ export async function handleChat(
         apiKeyId: key.id,
         providerId,
         connectionId: connection.id,
-        model: requestedModel,
+        model: upstreamModel,
         promptTokens: usage?.prompt_tokens ?? null,
         outputTokens: usage?.completion_tokens ?? null,
         latencyMs: Date.now() - startedAt,
@@ -412,7 +416,7 @@ export async function handleChat(
     apiKeyId: key.id,
     providerId,
     connectionId: lastConnectionId,
-    model: requestedModel,
+    model: upstreamModel,
     promptTokens: null,
     outputTokens: null,
     latencyMs: Date.now() - startedAt,
