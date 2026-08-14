@@ -63,11 +63,24 @@ export function LogitBiasPresetsEditor({ presets }: { presets: LogitBiasPreset[]
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name, entries }),
     });
-    setSaving(false);
     if (!res.ok) {
+      setSaving(false);
       setError("Failed to save preset");
       return;
     }
+    // Re-read the stored copy instead of trusting the submitted one: bias values are
+    // clamped to [-100, 100] and the entry list is capped on write
+    // (src/lib/prompts/logitBiasSchema.ts), so an out-of-range number typed here comes back
+    // different. Without this the editor kept rendering the pre-clamp value until a full
+    // remount, i.e. it lied about what the proxy will actually send. Same
+    // read-back-after-write shape as RichPresetsEditor.handleImport.
+    const stored = await fetch(`/api/logit-bias-presets/${preset.id}`);
+    if (stored.ok) {
+      const fresh = (await stored.json()) as LogitBiasPreset;
+      setName(fresh.name);
+      setEntries(fresh.entries);
+    }
+    setSaving(false);
     router.refresh();
   }
 

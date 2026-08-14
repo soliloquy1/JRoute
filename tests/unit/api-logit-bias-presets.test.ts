@@ -151,6 +151,41 @@ test("PATCH /api/logit-bias-presets/:id updates entries", async () => {
   assert.deepEqual(preset.entries, [{ text: "hi", value: 10 }]);
 });
 
+test("PATCH then GET /api/logit-bias-presets/:id exposes the clamped stored value", async () => {
+  // The dashboard editor re-reads the preset after saving precisely because of this: an
+  // out-of-range value is stored clamped, so the submitted number is not what the proxy
+  // will send.
+  const { POST } = await import("../../src/app/api/logit-bias-presets/route.ts");
+  const created = await POST(
+    new Request("http://localhost/api/logit-bias-presets", {
+      method: "POST",
+      headers: DASHBOARD_AUTH_HEADER,
+      body: JSON.stringify({ name: "Clamped", entries: [] }),
+    })
+  );
+  const { id } = (await created.json()) as { id: number };
+
+  const { PATCH, GET } = await import("../../src/app/api/logit-bias-presets/[id]/route.ts");
+  const patched = await PATCH(
+    new Request(`http://localhost/api/logit-bias-presets/${id}`, {
+      method: "PATCH",
+      headers: DASHBOARD_AUTH_HEADER,
+      body: JSON.stringify({ entries: [{ text: "x", value: 500 }] }),
+    }),
+    { params: Promise.resolve({ id: String(id) }) }
+  );
+  assert.equal(patched.status, 200);
+
+  const got = await GET(
+    new Request(`http://localhost/api/logit-bias-presets/${id}`, {
+      headers: DASHBOARD_AUTH_HEADER,
+    }),
+    { params: Promise.resolve({ id: String(id) }) }
+  );
+  const preset = (await got.json()) as { entries: Array<{ text: string; value: number }> };
+  assert.deepEqual(preset.entries, [{ text: "x", value: 100 }]);
+});
+
 test("DELETE /api/logit-bias-presets/:id removes the preset", async () => {
   const { POST } = await import("../../src/app/api/logit-bias-presets/route.ts");
   const created = await POST(
