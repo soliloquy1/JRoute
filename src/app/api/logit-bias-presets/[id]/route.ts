@@ -7,13 +7,13 @@ import {
   updateLogitBiasPreset,
   deleteLogitBiasPreset,
 } from "@/lib/db/logitBiasPresets.ts";
-import { LogitBiasEntrySchema } from "@/lib/prompts/logitBiasSchema.ts";
+import { LogitBiasEntriesSchema } from "@/lib/prompts/logitBiasSchema.ts";
 import { describeIssues, parseIdParam } from "@/lib/api/validation.ts";
 
 const PatchSchema = z
   .object({
     name: z.string().min(1).optional(),
-    entries: z.array(LogitBiasEntrySchema).optional(),
+    entries: LogitBiasEntriesSchema.optional(),
   })
   .refine((v) => Object.keys(v).length > 0, "At least one field required");
 

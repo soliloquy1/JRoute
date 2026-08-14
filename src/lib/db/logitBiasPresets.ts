@@ -1,6 +1,6 @@
 // src/lib/db/logitBiasPresets.ts
 import { getDb } from "./bootstrap.ts";
-import { LogitBiasEntrySchema, clampBiasValue } from "../prompts/logitBiasSchema.ts";
+import { LogitBiasEntriesSchema, clampBiasValue } from "../prompts/logitBiasSchema.ts";
 import type { LogitBiasEntry } from "../prompts/logitBiasSchema.ts";
 import type { LogitBiasPreset } from "./types.ts";
 
@@ -11,11 +11,14 @@ interface LogitBiasPresetRow {
   created_at: number;
 }
 
+// Validates the list AND its per-entry shape here rather than trusting callers: the API
+// routes enforce the same cap, but a direct DB write (scripts, other modules) must not be
+// able to store a preset the request path would then have to encode per request.
 function parseAndClampEntries(entries: LogitBiasEntry[]): LogitBiasEntry[] {
-  return entries.map((raw) => {
-    const parsed = LogitBiasEntrySchema.parse(raw);
-    return { text: parsed.text, value: clampBiasValue(parsed.value) };
-  });
+  return LogitBiasEntriesSchema.parse(entries).map((parsed) => ({
+    text: parsed.text,
+    value: clampBiasValue(parsed.value),
+  }));
 }
 
 function toLogitBiasPreset(row: LogitBiasPresetRow): LogitBiasPreset {

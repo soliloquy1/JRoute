@@ -62,6 +62,41 @@ test("POST /api/logit-bias-presets rejects an invalid entry shape", async () => 
   assert.equal(res.status, 400);
 });
 
+test("POST /api/logit-bias-presets rejects more entries than the cap", async () => {
+  const { POST } = await import("../../src/app/api/logit-bias-presets/route.ts");
+  const { MAX_LOGIT_BIAS_ENTRIES } = await import("../../src/lib/prompts/logitBiasSchema.ts");
+  const res = await POST(
+    new Request("http://localhost/api/logit-bias-presets", {
+      method: "POST",
+      headers: DASHBOARD_AUTH_HEADER,
+      body: JSON.stringify({
+        name: "Too Many",
+        entries: Array.from({ length: MAX_LOGIT_BIAS_ENTRIES + 1 }, () => ({
+          text: "x",
+          value: 0,
+        })),
+      }),
+    })
+  );
+  assert.equal(res.status, 400);
+});
+
+test("POST /api/logit-bias-presets rejects entry text longer than the cap", async () => {
+  const { POST } = await import("../../src/app/api/logit-bias-presets/route.ts");
+  const { MAX_LOGIT_BIAS_TEXT_LEN } = await import("../../src/lib/prompts/logitBiasSchema.ts");
+  const res = await POST(
+    new Request("http://localhost/api/logit-bias-presets", {
+      method: "POST",
+      headers: DASHBOARD_AUTH_HEADER,
+      body: JSON.stringify({
+        name: "Too Long",
+        entries: [{ text: "a".repeat(MAX_LOGIT_BIAS_TEXT_LEN + 1), value: 0 }],
+      }),
+    })
+  );
+  assert.equal(res.status, 400);
+});
+
 test("GET /api/logit-bias-presets lists created presets", async () => {
   const { GET } = await import("../../src/app/api/logit-bias-presets/route.ts");
   const res = await GET(

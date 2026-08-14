@@ -40,6 +40,16 @@ test("createLogitBiasPreset rejects an entry with empty text", async () => {
   assert.throws(() => createLogitBiasPreset("Bad", [{ text: "", value: 0 } as never]));
 });
 
+test("createLogitBiasPreset rejects more entries than the cap (direct DB writes can't bypass it)", async () => {
+  const { createLogitBiasPreset } = await import("../../src/lib/db/logitBiasPresets.ts");
+  const { MAX_LOGIT_BIAS_ENTRIES } = await import("../../src/lib/prompts/logitBiasSchema.ts");
+  const tooMany = Array.from({ length: MAX_LOGIT_BIAS_ENTRIES + 1 }, () => ({
+    text: "x",
+    value: 0,
+  }));
+  assert.throws(() => createLogitBiasPreset("Huge", tooMany));
+});
+
 test("createLogitBiasPreset rejects a duplicate name", async () => {
   const { createLogitBiasPreset } = await import("../../src/lib/db/logitBiasPresets.ts");
   createLogitBiasPreset("Dup", []);

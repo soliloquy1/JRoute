@@ -3,12 +3,12 @@ import { z } from "zod";
 import { authenticateDashboard } from "@/lib/auth/guard.ts";
 import { jsonError } from "@jroute/errors.ts";
 import { createLogitBiasPreset, listLogitBiasPresets } from "@/lib/db/logitBiasPresets.ts";
-import { LogitBiasEntrySchema } from "@/lib/prompts/logitBiasSchema.ts";
+import { LogitBiasEntriesSchema } from "@/lib/prompts/logitBiasSchema.ts";
 import { describeIssues } from "@/lib/api/validation.ts";
 
 const CreateSchema = z.object({
   name: z.string().min(1),
-  entries: z.array(LogitBiasEntrySchema),
+  entries: LogitBiasEntriesSchema,
 });
 
 export async function GET(req: Request): Promise<Response> {
