@@ -16,6 +16,8 @@ import { getPreset } from "../src/lib/db/presets.ts";
 import { getRichPreset } from "../src/lib/db/richPresets.ts";
 import { assembleRichPreset } from "../src/lib/prompts/richAssemble.ts";
 import { runTriggerMode } from "../src/lib/mcp/trigger.ts";
+import { getLogitBiasPreset } from "../src/lib/db/logitBiasPresets.ts";
+import { computeLogitBias } from "../src/lib/prompts/logitBias.ts";
 import { debugLog, debugLogError, redactHeaders } from "../src/lib/debugLog/logger.ts";
 import type { ApiKeyRecord } from "../src/lib/db/types.ts";
 import type { TaggedBlock } from "./convert/types.ts";
@@ -175,6 +177,26 @@ export async function handleChat(
     wireFormat: provider.wireFormat,
     maxTokens: resolved.maxTokens,
   });
+
+  if (key.logitBiasPresetId !== null) {
+    if (provider.wireFormat === "openai") {
+      const biasPreset = getLogitBiasPreset(key.logitBiasPresetId);
+      if (biasPreset) {
+        body.logit_bias = computeLogitBias(biasPreset.entries);
+        debugLog("logitBias.applied", {
+          requestId,
+          presetId: biasPreset.id,
+          tokenCount: Object.keys(body.logit_bias as Record<string, number>).length,
+        });
+      }
+    } else {
+      debugLog("logitBias.skipped", {
+        requestId,
+        presetId: key.logitBiasPresetId,
+        wireFormat: provider.wireFormat,
+      });
+    }
+  }
 
   const converter = getConverter(provider.wireFormat);
   if (!converter) {
