@@ -110,6 +110,25 @@ test("resolveClientModel routes a prefixed request only to its provider", () => 
   assert.equal(resolveClientModel("gpt-5.6-sol"), null);
 });
 
+test("importModels keeps native ids that contain '/' (aggregate gateways like OpenRouter)", () => {
+  seedProvider("openrouter", "or");
+  const imported = importModels("openrouter", [
+    { id: "openai/gpt-4o" },
+    { id: "meta-llama/llama-3.1-70b-instruct" },
+  ]);
+  assert.equal(imported, 2);
+  assert.equal(modelExists("openrouter", "openai/gpt-4o"), true);
+  assert.equal(modelExists("openrouter", "meta-llama/llama-3.1-70b-instruct"), true);
+});
+
+test("resolveClientModel resolves a gateway-prefixed request whose native id itself has a '/'", () => {
+  seedProvider("openrouter", "or");
+  createModel("openrouter", "openai/gpt-4o", 16384);
+  const resolved = resolveClientModel("or/openai/gpt-4o");
+  assert.equal(resolved?.providerId, "openrouter");
+  assert.equal(resolved?.nativeModel, "openai/gpt-4o");
+});
+
 test("resolveClientModel falls back to legacy empty-prefix providers", () => {
   seedProvider("openai");
   createModel("openai", "gpt-4o", 16384);
