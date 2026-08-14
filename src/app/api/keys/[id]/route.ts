@@ -2,12 +2,13 @@
 import { z } from "zod";
 import { authenticateDashboard } from "@/lib/auth/guard.ts";
 import { jsonError } from "@jroute/errors.ts";
-import { setApiKeyPreset, setApiKeyRichPreset, revokeApiKey } from "@/lib/auth/apiKeys.ts";
+import { setApiKeyPreset, setApiKeyRichPreset, setApiKeyLogitBiasPreset, revokeApiKey } from "@/lib/auth/apiKeys.ts";
 import { parseIdParam } from "@/lib/api/validation.ts";
 
 const PatchKeySchema = z.object({
   presetId: z.number().int().nullable().optional(),
   richPresetId: z.number().int().nullable().optional(),
+  logitBiasPresetId: z.number().int().nullable().optional(),
 });
 
 export async function PATCH(
@@ -24,6 +25,9 @@ export async function PATCH(
       setApiKeyRichPreset(id, parsed.data.richPresetId);
     } else if (parsed.data.presetId !== undefined) {
       setApiKeyPreset(id, parsed.data.presetId);
+    }
+    if (parsed.data.logitBiasPresetId !== undefined) {
+      setApiKeyLogitBiasPreset(id, parsed.data.logitBiasPresetId);
     }
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
