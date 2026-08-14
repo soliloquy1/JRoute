@@ -23,7 +23,13 @@ export function resolveTokenIds(text: string): number[] {
   if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
     try {
       const parsed = JSON.parse(trimmed);
-      if (Array.isArray(parsed) && parsed.every((x) => typeof x === "number")) {
+      // Token IDs are vocabulary indices, so only integers qualify. A fractional array
+      // ("[1.5, 82.9]") is not a raw-token-ID entry and must fall through to being
+      // tokenized as literal text — passing 1.5 upstream as a logit_bias key is a 400.
+      if (
+        Array.isArray(parsed) &&
+        parsed.every((x) => typeof x === "number" && Number.isInteger(x))
+      ) {
         return parsed;
       }
     } catch {

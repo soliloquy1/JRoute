@@ -21,6 +21,15 @@ test("resolveTokenIds falls back to tokenizing when the array literal isn't all 
   assert.deepEqual(resolveTokenIds("[abc]"), [58, 13997, 60]);
 });
 
+test("resolveTokenIds does not treat a fractional array literal as raw token IDs", () => {
+  // Token IDs are vocabulary indices; 1.5 is not one. The entry is therefore tokenized as
+  // the literal string "[1.5, 82.9]" instead of being forwarded as upstream bias keys.
+  const ids = resolveTokenIds("[1.5, 82.9]");
+  assert.notDeepEqual(ids, [1.5, 82.9]);
+  assert.ok(ids.every((id) => Number.isInteger(id)));
+  assert.deepEqual(ids, [58, 16, 13, 20, 11, 220, 6086, 13, 24, 60]);
+});
+
 test("resolveTokenIds returns an empty array for empty text", () => {
   assert.deepEqual(resolveTokenIds(""), []);
 });
