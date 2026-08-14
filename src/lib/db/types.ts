@@ -1,4 +1,5 @@
 import type { RichPresetJson } from "../prompts/stPresetSchema.ts";
+import type { LogitBiasEntry } from "../prompts/logitBiasSchema.ts";
 
 export type WireFormat = "openai" | "anthropic" | "gemini";
 export type ProviderKind = "apikey" | "oauth";
@@ -79,6 +80,13 @@ export interface RichPreset {
   lorebookIds: number[];
 }
 
+export interface LogitBiasPreset {
+  id: number;
+  name: string;
+  entries: LogitBiasEntry[];
+  createdAt: number;
+}
+
 export type McpTransport = "http" | "sse" | "stdio";
 
 export interface McpServer {
@@ -98,6 +106,7 @@ export interface ApiKeyRecord {
   label: string;
   presetId: number | null;
   richPresetId: number | null;
+  logitBiasPresetId: number | null;
   toolMode: ToolMode;
   rateLimitPerMin: number;
   createdAt: number;

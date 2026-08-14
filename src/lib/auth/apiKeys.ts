@@ -9,6 +9,7 @@ interface ApiKeyRow {
   label: string;
   preset_id: number | null;
   rich_preset_id: number | null;
+  logit_bias_preset_id: number | null;
   tool_mode: string;
   rate_limit_per_min: number;
   created_at: number;
@@ -27,6 +28,7 @@ function toRecord(row: ApiKeyRow): ApiKeyRecord {
     label: row.label,
     presetId: row.preset_id,
     richPresetId: row.rich_preset_id,
+    logitBiasPresetId: row.logit_bias_preset_id,
     toolMode: row.tool_mode as ToolMode,
     rateLimitPerMin: row.rate_limit_per_min,
     createdAt: row.created_at,
@@ -88,6 +90,15 @@ export function setApiKeyRichPreset(id: number, richPresetId: number | null): vo
   getDb()
     .prepare("UPDATE api_keys SET rich_preset_id = ?, preset_id = NULL WHERE id = ?")
     .run(richPresetId, id);
+}
+
+// Independent of presetId/richPresetId — a logit bias preset is an orthogonal dimension
+// (spec §3), so this setter does NOT clear the other preset columns, unlike
+// setApiKeyPreset/setApiKeyRichPreset above.
+export function setApiKeyLogitBiasPreset(id: number, logitBiasPresetId: number | null): void {
+  getDb()
+    .prepare("UPDATE api_keys SET logit_bias_preset_id = ? WHERE id = ?")
+    .run(logitBiasPresetId, id);
 }
 
 export function listApiKeys(): ApiKeyRecord[] {
