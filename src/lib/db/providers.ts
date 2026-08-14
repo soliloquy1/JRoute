@@ -67,20 +67,33 @@ export function upsertProvider(p: Provider): void {
       throw new Error(`Model prefix "${p.modelPrefix}" is already used by provider "${owner}"`);
     }
   }
-  getDb()
-    .prepare(
-      `INSERT INTO providers (id, name, kind, base_url, wire_format, enabled, model_prefix)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET
-         name = excluded.name,
-         kind = excluded.kind,
-         base_url = excluded.base_url,
-         wire_format = excluded.wire_format,
-         enabled = excluded.enabled,
-         model_prefix = excluded.model_prefix`
-    )
-    .run(p.id, p.name, p.kind, p.baseUrl, p.wireFormat, p.enabled ? 1 : 0, p.modelPrefix ?? "");
+  const isNew = !getProvider(p.id);
+  try {
+    getDb()
+      .prepare(
+        `INSERT INTO providers (id, name, kind, base_url, wire_format, enabled, model_prefix)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           name = excluded.name,
+           kind = excluded.kind,
+           base_url = excluded.base_url,
+           wire_format = excluded.wire_format,
+           enabled = excluded.enabled,
+           model_prefix = excluded.model_prefix`
+      )
+      .run(p.id, p.name, p.kind, p.baseUrl, p.wireFormat, p.enabled ? 1 : 0, p.modelPrefix ?? "");
+  } catch (e) {
+    // Backstop for the prefixOwner() check above: that check-then-insert is not atomic,
+    // so a concurrent writer can still race past it. The unique index (migration 006) is
+    // the real guarantee; translate its constraint violation into the same error shape.
+    if (e instanceof Error && /UNIQUE constraint failed.*model_prefix/.test(e.message)) {
+      throw new Error(`Model prefix "${p.modelPrefix}" is already used by another provider`);
+    }
+    throw e;
+  }
   // Keep legacy convenience: a freshly added default provider (openai/anthropic/google)
-  // automatically gets its well-known models, just like the old static MODEL_MAP.
-  seedDefaultModels();
+  // automatically gets its well-known models, just like the old static MODEL_MAP. Only
+  // on creation — an edit to an existing provider (e.g. changing its prefix) shouldn't
+  // re-run the full default-seed scan on every save.
+  if (isNew) seedDefaultModels();
 }

@@ -34,7 +34,8 @@ export async function pullProviderModelIds(provider: Provider, apiKey: string): 
 
   if (!fetched.ok) {
     const text = await fetched.text().catch(() => "");
-    throw new Error(`Provider returned ${fetched.status} from /models: ${text.slice(0, 200)}`);
+    const redacted = apiKey ? text.split(apiKey).join("[redacted]") : text;
+    throw new Error(`Provider returned ${fetched.status} from /models: ${redacted.slice(0, 200)}`);
   }
 
   const payload = (await fetched.json().catch(() => null)) as

@@ -163,3 +163,29 @@ test("seedDefaultModels seeds legacy models only for existing providers", () => 
   seedDefaultModels();
   assert.equal(listModels("openai").length, 2);
 });
+
+test("upsertProvider does not re-seed default models on an edit to an existing provider", () => {
+  seedProvider("openai");
+  deleteModel("openai", "gpt-4o");
+  assert.equal(modelExists("openai", "gpt-4o"), false);
+  // Editing an already-existing provider (e.g. changing its base URL) must not
+  // resurrect a default model an operator deliberately deleted.
+  seedProvider("openai");
+  assert.equal(modelExists("openai", "gpt-4o"), false);
+});
+
+test("model_prefix unique index rejects a duplicate that races past the app-level check", () => {
+  seedProvider("openrouter", "or");
+  // Bypass prefixOwner() to simulate a concurrent writer racing past the
+  // check-then-insert window; the migration 006 unique index is the real guard.
+  assert.throws(
+    () =>
+      getDb()
+        .prepare(
+          `INSERT INTO providers (id, name, kind, base_url, wire_format, enabled, model_prefix)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run("openrouter2", "openrouter2", "apikey", "https://or2.example", "openai", 1, "or"),
+    /UNIQUE constraint failed/
+  );
+});
