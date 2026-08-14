@@ -18,6 +18,17 @@ function presetValue(k: ApiKeyRecord): string {
   return "";
 }
 
+function activePresetName(
+  k: ApiKeyRecord,
+  presets: Preset[],
+  richPresets: RichPreset[]
+): string | null {
+  if (k.richPresetId !== null)
+    return richPresets.find((p) => p.id === k.richPresetId)?.name ?? null;
+  if (k.presetId !== null) return presets.find((p) => p.id === k.presetId)?.name ?? null;
+  return null;
+}
+
 export function KeyTable({
   keys,
   presets,
@@ -121,6 +132,24 @@ export function KeyTable({
                     </optgroup>
                   )}
                 </select>
+                {(() => {
+                  const name = activePresetName(k, presets, richPresets);
+                  return (
+                    <div className="mt-1 flex items-center gap-1.5 text-[11px]">
+                      {name ? (
+                        <>
+                          <span className="h-1.5 w-1.5 rounded-full bg-success" />
+                          <span className="text-success">{name}</span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="h-1.5 w-1.5 rounded-full bg-text-muted" />
+                          <span className="text-text-muted">No preset</span>
+                        </>
+                      )}
+                    </div>
+                  );
+                })()}
               </td>
               <td className="px-4 py-2.5 text-right">
                 <button
