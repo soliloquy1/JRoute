@@ -12,6 +12,8 @@ interface ConnectionRow {
   cooldown_until: number | null;
   last_error: string | null;
   enabled: number;
+  provider_specific_data: string | null;
+  quota_window_thresholds_json: string | null;
 }
 
 function toConnection(row: ConnectionRow): Connection {
@@ -42,6 +44,8 @@ function toConnection(row: ConnectionRow): Connection {
     lastError: row.last_error,
     credentialDecryptFailed,
     enabled: row.enabled !== 0,
+    providerSpecificData: row.provider_specific_data ?? null,
+    quotaWindowThresholds: row.quota_window_thresholds_json ?? null,
   };
 }
 
@@ -52,10 +56,25 @@ export function listConnections(providerId: string): Connection[] {
   return rows.map(toConnection);
 }
 
-export function createConnection(providerId: string, label: string, apiKey: string): number {
+export function createConnection(
+  providerId: string,
+  label: string,
+  apiKey: string,
+  extra: { providerSpecificData?: string | null; quotaWindowThresholds?: string | null } = {}
+): number {
   const info = getDb()
-    .prepare("INSERT INTO connections (provider_id, label, api_key) VALUES (?, ?, ?)")
-    .run(providerId, label, encrypt(apiKey));
+    .prepare(
+      `INSERT INTO connections
+        (provider_id, label, api_key, provider_specific_data, quota_window_thresholds_json)
+       VALUES (?, ?, ?, ?, ?)`
+    )
+    .run(
+      providerId,
+      label,
+      encrypt(apiKey),
+      extra.providerSpecificData ?? null,
+      extra.quotaWindowThresholds ?? null
+    );
   return Number(info.lastInsertRowid);
 }
 
@@ -73,7 +92,14 @@ export function clearCooldown(id: number): void {
 
 export function updateConnection(
   id: number,
-  patch: Partial<{ label: string; apiKey: string; priority: number; enabled: boolean }>
+  patch: Partial<{
+    label: string;
+    apiKey: string;
+    priority: number;
+    enabled: boolean;
+    providerSpecificData: string | null;
+    quotaWindowThresholds: string | null;
+  }>
 ): void {
   const sets: string[] = [];
   const params: unknown[] = [];
@@ -92,6 +118,14 @@ export function updateConnection(
   if (patch.enabled !== undefined) {
     sets.push("enabled = ?");
     params.push(patch.enabled ? 1 : 0);
+  }
+  if (patch.providerSpecificData !== undefined) {
+    sets.push("provider_specific_data = ?");
+    params.push(patch.providerSpecificData);
+  }
+  if (patch.quotaWindowThresholds !== undefined) {
+    sets.push("quota_window_thresholds_json = ?");
+    params.push(patch.quotaWindowThresholds);
   }
   if (sets.length === 0) return;
   params.push(id);

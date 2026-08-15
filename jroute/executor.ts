@@ -69,6 +69,13 @@ export interface ExecuteParams {
    * NOT from `body` above (the converted body has `stream` stripped for Gemini). Only formats
    * whose URL selects a streaming action (Gemini) read it. */
   stream?: boolean;
+  /**
+   * OAuth token resolver. When the provider's `kind` is `"oauth"`, the executor calls this
+   * with the connection id to obtain the active bearer token instead of using
+   * `connection.apiKey`. Injected (never `getDb()`-queried inside the executor) so the
+   * `execute(params, fetchImpl)` signature stays testable. Falls back to `connection.apiKey`.
+   */
+  tokenResolver?: (connectionId: number) => string | null;
 }
 
 export interface ExecuteResult {
@@ -204,6 +211,16 @@ export async function execute(
     : wire.path;
   const url = `${provider.baseUrl.replace(/\/+$/, "")}${path}`;
 
+  // Resolve the auth token. For OAuth providers the bearer comes from the injected
+  // `tokenResolver` (looked up from `oauth_tokens` per connection id); everything else
+  // falls back to the connection's stored apiKey. The token is ALWAYS injected through
+  // the active wire descriptor's `authHeaders` — never as a literal `Authorization:
+  // Bearer` — because anthropic/gemini use different header names.
+  const authToken =
+    provider.kind === "oauth" && params.tokenResolver
+      ? params.tokenResolver(connection.id) ?? connection.apiKey ?? ""
+      : connection.apiKey ?? "";
+
   let res: Response;
   try {
     res = await fetchImpl(url, {
@@ -212,7 +229,7 @@ export async function execute(
       headers: {
         "content-type": "application/json",
         ...wire.extraHeaders,
-        ...wire.authHeaders(connection.apiKey ?? ""),
+        ...wire.authHeaders(authToken),
       },
       body: JSON.stringify(body),
     });

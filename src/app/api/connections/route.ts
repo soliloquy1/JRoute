@@ -8,6 +8,14 @@ const CreateConnectionSchema = z.object({
   providerId: z.string().min(1),
   label: z.string().min(1),
   apiKey: z.string().min(1),
+  providerSpecificData: z.record(z.string(), z.unknown()).optional(),
+  quotaWindowThresholds: z
+    .object({
+      requests: z.number().int().positive().optional(),
+      tokens: z.number().int().positive().optional(),
+      windowMs: z.number().int().positive().optional(),
+    })
+    .optional(),
 });
 
 export async function POST(req: Request): Promise<Response> {
@@ -15,7 +23,15 @@ export async function POST(req: Request): Promise<Response> {
   try {
     const parsed = CreateConnectionSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return jsonError(400, "Invalid request body");
-    const id = createConnection(parsed.data.providerId, parsed.data.label, parsed.data.apiKey);
+    const { providerId, label, apiKey, providerSpecificData, quotaWindowThresholds } = parsed.data;
+    const id = createConnection(providerId, label, apiKey, {
+      providerSpecificData: providerSpecificData
+        ? JSON.stringify(providerSpecificData)
+        : null,
+      quotaWindowThresholds: quotaWindowThresholds
+        ? JSON.stringify(quotaWindowThresholds)
+        : null,
+    });
     return new Response(JSON.stringify({ id }), {
       status: 200,
       headers: { "content-type": "application/json" },

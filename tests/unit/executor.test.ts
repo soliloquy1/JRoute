@@ -367,3 +367,92 @@ test("execute builds the STREAMING gemini URL when params.stream is true, NOT fr
     "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse"
   );
 });
+
+// ── Phase 2: OAuth token-injection seam ──
+
+const oauthProvider: Provider = {
+  id: "claude",
+  name: "Claude Code",
+  kind: "oauth",
+  baseUrl: "https://api.anthropic.com",
+  wireFormat: "anthropic",
+  enabled: true,
+  oauthProvider: "claude",
+};
+
+const oauthConnection: Connection = {
+  id: 4,
+  providerId: "claude",
+  label: "oauth-conn",
+  apiKey: null,
+  priority: 100,
+  cooldownUntil: null,
+  lastError: null,
+  credentialDecryptFailed: false,
+  enabled: true,
+};
+
+test("oauth provider uses the resolver token via the wire's authHeaders (anthropic x-api-key)", async () => {
+  let seenHeaders: Headers | null = null;
+  const fakeFetch: typeof fetch = async (_input, init) => {
+    seenHeaders = new Headers(init?.headers);
+    return new Response('{"ok":true}', {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const res = await execute(
+    {
+      provider: oauthProvider,
+      connection: oauthConnection,
+      body: { model: "claude-sonnet-4-6" },
+      signal: new AbortController().signal,
+      tokenResolver: () => "oauth-access-token",
+    },
+    fakeFetch
+  );
+  assert.equal(res.ok, true);
+  // Token injected through the anthropic wire descriptor — x-api-key, NOT Bearer.
+  assert.equal(seenHeaders?.get("x-api-key"), "oauth-access-token");
+  assert.equal(seenHeaders?.get("authorization"), null);
+});
+
+test("oauth provider falls back to connection.apiKey when resolver returns null", async () => {
+  let seenHeaders: Headers | null = null;
+  const fakeFetch: typeof fetch = async (_input, init) => {
+    seenHeaders = new Headers(init?.headers);
+    return new Response('{"ok":true}', { status: 200 });
+  };
+  const fallbackConn: Connection = { ...oauthConnection, apiKey: "sk-fallback" };
+  await execute(
+    {
+      provider: oauthProvider,
+      connection: fallbackConn,
+      body: { model: "claude-sonnet-4-6" },
+      signal: new AbortController().signal,
+      tokenResolver: () => null,
+    },
+    fakeFetch
+  );
+  assert.equal(seenHeaders?.get("x-api-key"), "sk-fallback");
+});
+
+test("apikey provider ignores the tokenResolver entirely", async () => {
+  let seenAuth: string | null = null;
+  const fakeFetch: typeof fetch = async (_input, init) => {
+    seenAuth = new Headers(init?.headers).get("authorization");
+    return new Response('{"ok":true}', { status: 200 });
+  };
+  await execute(
+    {
+      provider,
+      connection,
+      body: { model: "gpt-4" },
+      signal: new AbortController().signal,
+      // Resolver must be ignored for apikey providers.
+      tokenResolver: () => "should-not-be-used",
+    },
+    fakeFetch
+  );
+  assert.equal(seenAuth, "Bearer sk-test");
+});

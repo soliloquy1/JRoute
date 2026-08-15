@@ -3,6 +3,8 @@ import { z } from "zod";
 import { jsonError } from "./errors.ts";
 import { listConnections, markCooldown, clearCooldown } from "../src/lib/db/connections.ts";
 import { logUsage } from "../src/lib/db/usageLogs.ts";
+import { recordUsage } from "../src/lib/db/quotaWindows.ts";
+import { getOAuthToken, isTokenValid } from "../src/lib/db/oauthTokens.ts";
 import { eligibleConnections } from "./selectConnection.ts";
 import { execute, cooldownMsFor } from "./executor.ts";
 import { keepaliveStream, sseHeaders } from "./sse.ts";
@@ -170,6 +172,15 @@ export async function handleChat(
   }
   const provider = resolved.provider;
   const providerId = provider.id;
+  // Phase 2: for OAuth providers, resolve the bearer from the persisted `oauth_tokens`
+  // (encrypted) rather than `connection.apiKey`. Injected into the executor so its
+  // `execute(params, fetchImpl)` signature stays testable. Returns null when no valid
+  // token is stored, falling back to the connection's apiKey (or a 401 upstream).
+  const tokenResolver = (connectionId: number): string | null => {
+    if (provider.kind !== "oauth") return null;
+    const t = getOAuthToken(provider.oauthProvider ?? provider.id, connectionId);
+    return isTokenValid(t) ? (t.accessToken as string) : null;
+  };
   // The client may send a prefixed id (`or/gpt-5.6-sol`); the upstream must receive
   // the native id (`gpt-5.6-sol`). `requestedModel` is preserved for logging only.
   const upstreamModel = resolved.nativeModel;
@@ -281,9 +292,15 @@ export async function handleChat(
         // there), so `upstreamBody.stream` is always undefined and the streaming URL would
         // never be selected. `body` here is the parsed pre-conversion client request.
         stream: body.stream === true,
+        tokenResolver,
       },
       fetchImpl
     );
+
+    // Phase 3/4: attribute this upstream attempt to the connection's rolling quota
+    // window (1 request per dial; tokens are added once known below). Failed attempts
+    // (e.g. 429) also consume the provider's limit, so they count too.
+    recordUsage(connection.id, 1, 0, Date.now());
 
     debugLog("upstream.result", {
       requestId,
@@ -357,6 +374,13 @@ export async function handleChat(
             promptTokens: completion.promptTokens,
             outputTokens: completion.outputTokens,
           });
+          // Phase 3/4: fold the realized token usage into the rolling quota window.
+          recordUsage(
+            connection.id,
+            0,
+            (completion.promptTokens ?? 0) + (completion.outputTokens ?? 0),
+            Date.now()
+          );
           logUsage({
             apiKeyId: key.id,
             providerId,
@@ -383,6 +407,13 @@ export async function handleChat(
         ? responseConverter.convertResponse(result.json, requestedModel)
         : result.json;
       const usage = (outJson as { usage?: UpstreamUsage } | null)?.usage;
+      // Phase 3/4: fold the token usage into the rolling quota window now that we know it.
+      recordUsage(
+        connection.id,
+        0,
+        (usage?.prompt_tokens ?? 0) + (usage?.completion_tokens ?? 0),
+        Date.now()
+      );
       debugLog("response.success", {
         requestId,
         connectionId: connection.id,
