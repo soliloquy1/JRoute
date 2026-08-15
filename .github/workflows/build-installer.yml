@@ -1,0 +1,108 @@
+name: Build Installer
+
+# Builds the cross-platform JRoute installer (Electron wrapper) on every OS and,
+# when a version tag is pushed, drafts a GitHub Release with the three artifacts.
+#
+# Signing is reserved but disabled for v0.2.0-beta. To enable later, set these
+# repository secrets and the electron-builder `afterSign` hook will pick them up:
+#   CSC_LINK / CSC_KEY_PASSWORD  (macOS & Windows Authenticode)
+#   APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID  (macOS notarization)
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to draft (e.g. v0.2.0-beta)"
+        required: false
+        default: "v0.2.0-beta"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: mac
+          - os: windows-latest
+            platform: win
+          - os: ubuntu-latest
+            platform: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout JRoute
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js (for the installer toolchain)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install installer dependencies
+        working-directory: installer
+        run: npm ci
+
+      - name: Build installer (Electron)
+        working-directory: installer
+        # --publish=never keeps electron-builder from pushing anywhere; we attach in the release job.
+        run: npm run build -- --publish=never
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jroute-installer-${{ matrix.platform }}
+          path: |
+            installer/dist/*.dmg
+            installer/dist/*.exe
+            installer/dist/*.AppImage
+            installer/dist/*.deb
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
+          name: JRoute Installer ${{ github.event.inputs.release_tag || github.ref_name }}
+          draft: true
+          prerelease: true
+          files: |
+            artifacts/**/*.dmg
+            artifacts/**/*.exe
+            artifacts/**/*.AppImage
+            artifacts/**/*.deb
+          body: |
+            ## JRoute Installer ${{ github.event.inputs.release_tag || github.ref_name }}
+
+            Cross-platform one-click installer for JRoute (JanitorAI reverse proxy).
+
+            ### Downloads
+            - **Windows** — `JRoute-Setup-*.exe` (NSIS). Unsigned: right-click → "Run anyway".
+            - **macOS** — `JRoute-*.dmg`. Unsigned: right-click → Open, or `xattr -cr /Applications/JRoute.app`.
+            - **Linux** — `JRoute-*.AppImage` (portable) or `jroute_*_*.deb`.
+
+            ### Notes
+            - The first launch downloads a Node.js runtime, clones/builds JRoute, and runs it locally.
+            - An internet connection is required for installation.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
