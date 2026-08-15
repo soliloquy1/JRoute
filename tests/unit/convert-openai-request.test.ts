@@ -19,7 +19,7 @@ test("openai converter strips the prefix even when blocks are injected", () => {
     model: "gpt-5.6-sol",
     maxTokens: 8192,
     body: { model: "or/gpt-5.6-sol", messages: [{ role: "user", content: "hi" }] },
-    blocks: [{ role: "system-prepend", content: "system text", order: 0 }],
+    blocks: [{ role: "system-prepend", content: "system text", tag: "system-block" }],
   });
   assert.equal(out.model, "gpt-5.6-sol");
   const messages = out.messages as Array<{ role: string; content: string }>;
