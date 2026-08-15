@@ -14,20 +14,29 @@ into `providers`, so we never ship a dead row JRoute cannot proxy.
 
 ## Expressible OAuth (shipped as catalog rows)
 
+> `baseUrl` is the **host + version** root: the executor appends the wire path
+> (`/chat/completions`, `/v1/messages`, or the Gemini `buildPath`), so the version segment (e.g.
+> `/v1`) MUST be present. Base URLs below are re-derived from
+> `open-sse/config/providers/registry/<id>/index.ts`.
+
 | id            | name            | wireFormat | baseUrl                              | oauthProvider  |
 | ------------- | --------------- | ---------- | ------------------------------------ | -------------- |
 | `claude`      | Claude Code     | anthropic  | `https://api.anthropic.com`          | `claude`       |
-| `xai-oauth`   | xAI OAuth (Grok)| openai     | `https://api.x.ai`                   | `xai-oauth`    |
-| `openference` | Openference     | openai     | `https://api.openference.com`        | `openference`  |
-| `kimi-coding` | Kimi Code CLI   | openai     | `https://api.moonshot.cn/v1`         | `kimi-coding`  |
-| `kilocode`    | Kilo Code       | openai     | `https://api.kilocode.ai/v1`         | `kilocode`     |
-| `cline`       | Cline           | openai     | `https://api.coline.ai/v1`           | `cline`        |
-| `clinepass`   | ClinePass       | openai     | `https://api.coline.ai/v1`           | `clinepass`    |
+| `xai-oauth`   | xAI OAuth (Grok)| openai     | `https://api.x.ai/v1`                | `xai-oauth`    |
+| `kimi-coding` | Kimi Code CLI   | openai     | `https://api.moonshot.ai/v1`         | `kimi-coding`  |
+| `kilocode`    | Kilo Code       | openai     | `https://api.kilo.ai/api/openrouter` | `kilocode`     |
+| `cline`       | Cline           | openai     | `https://api.cline.bot/api/v1`       | `cline`        |
+| `clinepass`   | ClinePass       | openai     | `https://api.cline.bot/api/v1`       | `clinepass`    |
+
+> `openference` was removed: it appears in **no** OmniRoute registry and has no real base URL or
+> OAuth config, so it was fabricated. Not expressible, not deferred — simply deleted.
 
 ## Curated API-key providers (shipped)
 
-`openai`, `anthropic`, `google`, `deepseek`, `groq`, `xai`, `openrouter`, plus custom-compatible
-templates `custom-openai` / `custom-anthropic` / `custom-gemini` (operator supplies `baseUrl` + key).
+`openai`, `anthropic`, `google`, `deepseek`, `groq`, `xai`, `openrouter`. Custom-compatible providers
+are added by the operator through the dashboard (Phase 1c `AddCompatibleProviderModal`), not seeded
+from the catalog — the previous `custom-*` template rows had an invalid `https://` base URL that
+failed `z.uri()` validation and could never be persisted.
 
 ## Deferred OAuth (documented, NOT shipped)
 
@@ -54,12 +63,14 @@ templates `custom-openai` / `custom-anthropic` / `custom-gemini` (operator suppl
 
 ## Open questions resolved
 
-1. **Expressible vs deferred list** — resolved above (7 expressible OAuth, 18 deferred).
+1. **Expressible vs deferred list** — resolved above (6 expressible OAuth, 18 deferred).
 2. **`tokenResolver` injection shape** — injected as an optional parameter into `execute()`
    (`tokenResolver?: (connectionId: number) => string | null`), preserving the testable
    `execute(params, fetchImpl)` signature. No `getDb()` call inside the executor.
-3. **Refreshed-token storage** — written (encrypted) back to `oauth_tokens` by `src/lib/oauth/refresh.ts`
-   (Phase 2). Supports providers whose OAuth flow returns a refresh token (all expressible ones).
+3. **Refreshed-token storage** — `src/lib/oauth/refresh.ts` was **dropped from #28**: it had no callers
+   and POSTed refresh tokens to guessed hosts (`api.coline.ai`, `api.kilocode.ai`, `api.x.ai/oauth2/token`).
+   It lands in **Phase 2**, wired to the executor's 401 path, using the real token endpoints from
+   `src/lib/oauth/constants/oauth.ts` (form-encoded body, `client_id`, `AbortSignal` timeout).
 4. **`quota_window_thresholds_json` ownership** — lives on `connections` (Phase 0 migration 010);
    `provider_specific_data` is a separate free-form bag on `providers`.
 5. **Bootstrap seeding** — `seedCatalogProviders()` (INSERT OR IGNORE on id) runs at first boot in

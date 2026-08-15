@@ -15,9 +15,8 @@ const { createConnection, updateConnection, listConnections } = await import(
   "../../src/lib/db/connections.ts"
 );
 const { eligibleConnections } = await import("../../jroute/selectConnection.ts");
-const { isOverQuota, recordUsage, getWindow, parseQuotaThresholds } = await import(
-  "../../src/lib/db/quotaWindows.ts"
-);
+const { isOverQuota, recordUsage, getWindow, parseQuotaThresholds, pruneQuotaWindows } =
+  await import("../../src/lib/db/quotaWindows.ts");
 
 after(() => {
   resetDb();
@@ -97,4 +96,61 @@ test("recordUsage isolates buckets by window start", () => {
   recordUsage(id, 1, 0, later);
   assert.equal(getWindow(id, 60_000)!.requests, 1);
   assert.equal(getWindow(id, 120_000)!.requests, 1);
+});
+
+test("recordUsage respects a non-60s configured window (windowMs = 3_600_000)", () => {
+  freshProvider();
+  const id = createConnection("openai", "a", "sk-a");
+  updateConnection(id, {
+    quotaWindowThresholds: JSON.stringify({ requests: 100, windowMs: 3_600_000 }),
+  });
+  // Anchor both requests inside the same 1h bucket, but >60s apart so the default
+  // 60s window would have split them — proving the configured 1h windowMs is honored.
+  const start = Math.floor(Date.now() / 3_600_000) * 3_600_000;
+  const t1 = start + 1_000;
+  const t2 = start + 120_000;
+  recordUsage(id, 1, 0, t1, 3_600_000);
+  recordUsage(id, 1, 0, t2, 3_600_000);
+  const w = getWindow(id, start)!;
+  assert.equal(w.requests, 2, "both requests share the 1h bucket");
+});
+
+test("isOverQuota trips a non-60s window because recordUsage and read agree on windowMs", () => {
+  freshProvider();
+  const id = createConnection("openai", "a", "sk-a");
+  updateConnection(id, {
+    quotaWindowThresholds: JSON.stringify({ requests: 1, windowMs: 3_600_000 }),
+  });
+  const conn = listConnections("openai").find((c) => c.id === id)!;
+  const now = Date.now();
+  assert.equal(isOverQuota(conn, now), false);
+  recordUsage(id, 1, 0, now, 3_600_000);
+  assert.equal(isOverQuota(conn, now), true);
+});
+
+test("parseQuotaThresholds clamps a zero/negative/NaN windowMs to default", () => {
+  const zero = parseQuotaThresholds(JSON.stringify({ requests: 5, windowMs: 0 }));
+  assert.equal(zero.windowMs, undefined);
+  const neg = parseQuotaThresholds(JSON.stringify({ windowMs: -1000 }));
+  assert.equal(neg.windowMs, undefined);
+  const nan = parseQuotaThresholds(JSON.stringify({ windowMs: "nope" }));
+  assert.equal(nan.windowMs, undefined);
+  const ok = parseQuotaThresholds(JSON.stringify({ windowMs: 3600000 }));
+  assert.equal(ok.windowMs, 3600000);
+});
+
+test("pruneQuotaWindows deletes buckets older than the cutoff", () => {
+  freshProvider();
+  const id = createConnection("openai", "a", "sk-a");
+  // now=1000 → default 60s bucket start 0; now=2_000_000 → bucket start 1_980_000.
+  const oldStart = 0;
+  const recentStart = 1_980_000;
+  recordUsage(id, 1, 0, 1000);
+  recordUsage(id, 1, 0, 2_000_000);
+  assert.equal(getWindow(id, oldStart)?.requests, 1);
+  assert.equal(getWindow(id, recentStart)?.requests, 1);
+  const removed = pruneQuotaWindows(1_000_000);
+  assert.equal(removed, 1);
+  assert.equal(getWindow(id, oldStart), null);
+  assert.equal(getWindow(id, recentStart)?.requests, 1);
 });

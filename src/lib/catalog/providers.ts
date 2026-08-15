@@ -61,29 +61,23 @@ export const CATALOG_PROVIDERS: CatalogProvider[] = [
     name: "xAI OAuth (Grok)",
     kind: "oauth",
     category: "oauth",
-    baseUrl: "https://api.x.ai",
+    // Registry: open-sse/config/providers/registry/xai-oauth → xai.baseUrl
+    // "https://api.x.ai/v1/chat/completions". The executor appends the wire path
+    // ("/chat/completions"), so the catalog baseUrl MUST keep the /v1 version segment.
+    baseUrl: "https://api.x.ai/v1",
     wireFormat: "openai",
     oauthProvider: "xai-oauth",
     icon: "auto_awesome",
     color: "#1DA1F2",
   },
   {
-    id: "openference",
-    name: "Openference",
-    kind: "oauth",
-    category: "oauth",
-    baseUrl: "https://api.openference.com",
-    wireFormat: "openai",
-    oauthProvider: "openference",
-    icon: "openference",
-    color: "#6366F1",
-  },
-  {
     id: "kimi-coding",
     name: "Kimi Code CLI",
     kind: "oauth",
     category: "oauth",
-    baseUrl: "https://api.moonshot.cn/v1",
+    // Registry: open-sse/config/providers/registry/moonshot →
+    // "https://api.moonshot.ai/v1/chat/completions".
+    baseUrl: "https://api.moonshot.ai/v1",
     wireFormat: "openai",
     oauthProvider: "kimi-coding",
     icon: "psychology",
@@ -94,7 +88,9 @@ export const CATALOG_PROVIDERS: CatalogProvider[] = [
     name: "Kilo Code",
     kind: "oauth",
     category: "oauth",
-    baseUrl: "https://api.kilocode.ai/v1",
+    // Registry: open-sse/config/providers/registry/kilocode →
+    // "https://api.kilo.ai/api/openrouter/chat/completions".
+    baseUrl: "https://api.kilo.ai/api/openrouter",
     wireFormat: "openai",
     oauthProvider: "kilocode",
     providerSpecificDefaults: { anonymousFallback: true },
@@ -106,7 +102,9 @@ export const CATALOG_PROVIDERS: CatalogProvider[] = [
     name: "Cline",
     kind: "oauth",
     category: "oauth",
-    baseUrl: "https://api.coline.ai/v1",
+    // Registry: open-sse/config/providers/registry/cline →
+    // "https://api.cline.bot/api/v1/chat/completions" (api.coline.ai does not exist).
+    baseUrl: "https://api.cline.bot/api/v1",
     wireFormat: "openai",
     oauthProvider: "cline",
     icon: "smart_toy",
@@ -117,7 +115,9 @@ export const CATALOG_PROVIDERS: CatalogProvider[] = [
     name: "ClinePass",
     kind: "oauth",
     category: "oauth",
-    baseUrl: "https://api.coline.ai/v1",
+    // Registry: open-sse/config/providers/registry/clinepass →
+    // "https://api.cline.bot/api/v1/chat/completions".
+    baseUrl: "https://api.cline.bot/api/v1",
     wireFormat: "openai",
     oauthProvider: "clinepass",
     icon: "smart_toy",
@@ -160,7 +160,8 @@ export const CATALOG_PROVIDERS: CatalogProvider[] = [
     name: "DeepSeek",
     kind: "apikey",
     category: "apikey",
-    baseUrl: "https://api.deepseek.com",
+    // Registry: open-sse/config/providers/registry/deepseek → "https://api.deepseek.com/v1/chat/completions".
+    baseUrl: "https://api.deepseek.com/v1",
     wireFormat: "openai",
     icon: "deepseek",
     color: "#4D6BFE",
@@ -180,7 +181,8 @@ export const CATALOG_PROVIDERS: CatalogProvider[] = [
     name: "xAI",
     kind: "apikey",
     category: "apikey",
-    baseUrl: "https://api.x.ai",
+    // Registry: open-sse/config/providers/registry/xai → "https://api.x.ai/v1/chat/completions".
+    baseUrl: "https://api.x.ai/v1",
     wireFormat: "openai",
     icon: "auto_awesome",
     color: "#1DA1F2",
@@ -194,38 +196,6 @@ export const CATALOG_PROVIDERS: CatalogProvider[] = [
     wireFormat: "openai",
     icon: "openrouter",
     color: "#0A0A0A",
-  },
-
-  // ── Custom-compatible templates (operator fills baseUrl + key) ──
-  {
-    id: "custom-openai",
-    name: "Custom (OpenAI-compatible)",
-    kind: "apikey",
-    category: "compatible",
-    baseUrl: "https://",
-    wireFormat: "openai",
-    icon: "tune",
-    color: "#6B7280",
-  },
-  {
-    id: "custom-anthropic",
-    name: "Custom (Anthropic-compatible)",
-    kind: "apikey",
-    category: "compatible",
-    baseUrl: "https://",
-    wireFormat: "anthropic",
-    icon: "tune",
-    color: "#6B7280",
-  },
-  {
-    id: "custom-gemini",
-    name: "Custom (Gemini-compatible)",
-    kind: "apikey",
-    category: "compatible",
-    baseUrl: "https://",
-    wireFormat: "gemini",
-    icon: "tune",
-    color: "#6B7280",
   },
 ];
 

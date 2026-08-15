@@ -1,4 +1,5 @@
 // src/components/dashboard/ProviderCard.tsx
+import Link from "next/link";
 import { listConnections } from "@/lib/db/connections.ts";
 import type { Connection, Provider } from "@/lib/db/types.ts";
 import { ConnectionList } from "./ConnectionList.tsx";
@@ -20,7 +21,12 @@ export function ProviderCard({ provider }: { provider: Provider }) {
       <div className="mb-3 flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-semibold text-text-main">{provider.name}</span>
+              <Link
+                href={`/providers/${encodeURIComponent(provider.id)}`}
+                className="truncate text-sm font-semibold text-text-main hover:text-accent"
+              >
+                {provider.name}
+              </Link>
             <span
               className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
                 provider.enabled

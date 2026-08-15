@@ -3,7 +3,7 @@ import { z } from "zod";
 import { jsonError } from "./errors.ts";
 import { listConnections, markCooldown, clearCooldown } from "../src/lib/db/connections.ts";
 import { logUsage } from "../src/lib/db/usageLogs.ts";
-import { recordUsage } from "../src/lib/db/quotaWindows.ts";
+import { recordUsage, parseQuotaThresholds } from "../src/lib/db/quotaWindows.ts";
 import { getOAuthToken, isTokenValid } from "../src/lib/db/oauthTokens.ts";
 import { eligibleConnections } from "./selectConnection.ts";
 import { execute, cooldownMsFor } from "./executor.ts";
@@ -261,6 +261,12 @@ export async function handleChat(
   for (let attempt = 0; attempt < candidates.length; attempt += 1) {
     const connection = candidates[attempt];
 
+    // The connection's configured quota window length (Phase 2 fix): recordUsage must
+    // bucket into the SAME windowMs that isOverQuota reads, or a non-60s threshold never
+    // trips. Falls back to the 60s default when unset/garbage.
+    const windowMs =
+      parseQuotaThresholds(connection.quotaWindowThresholds).windowMs ?? 60_000;
+
     // Operator addition B: skip connections whose credential could not be decrypted.
     // This is a config problem (rotated/lost STORAGE_ENCRYPTION_KEY), not a connection
     // health issue. Do not cool down — just skip and let healthy connections behind it
@@ -299,8 +305,14 @@ export async function handleChat(
 
     // Phase 3/4: attribute this upstream attempt to the connection's rolling quota
     // window (1 request per dial; tokens are added once known below). Failed attempts
-    // (e.g. 429) also consume the provider's limit, so they count too.
-    recordUsage(connection.id, 1, 0, Date.now());
+    // (e.g. 429) also consume the provider's limit, so they count too. Wrapped in
+    // try/catch: with foreign_keys=ON a stale/ghost connection id can throw inside the
+    // stream-completion callback, and a throw here must not abort the failover loop.
+    try {
+      recordUsage(connection.id, 1, 0, Date.now(), windowMs);
+    } catch (err) {
+      debugLogError("quota.record_failed", { connectionId: connection.id, error: String(err) });
+    }
 
     debugLog("upstream.result", {
       requestId,
@@ -375,12 +387,17 @@ export async function handleChat(
             outputTokens: completion.outputTokens,
           });
           // Phase 3/4: fold the realized token usage into the rolling quota window.
-          recordUsage(
-            connection.id,
-            0,
-            (completion.promptTokens ?? 0) + (completion.outputTokens ?? 0),
-            Date.now()
-          );
+          try {
+            recordUsage(
+              connection.id,
+              0,
+              (completion.promptTokens ?? 0) + (completion.outputTokens ?? 0),
+              Date.now(),
+              windowMs
+            );
+          } catch (err) {
+            debugLogError("quota.record_failed", { connectionId: connection.id, error: String(err) });
+          }
           logUsage({
             apiKeyId: key.id,
             providerId,
@@ -408,12 +425,17 @@ export async function handleChat(
         : result.json;
       const usage = (outJson as { usage?: UpstreamUsage } | null)?.usage;
       // Phase 3/4: fold the token usage into the rolling quota window now that we know it.
-      recordUsage(
-        connection.id,
-        0,
-        (usage?.prompt_tokens ?? 0) + (usage?.completion_tokens ?? 0),
-        Date.now()
-      );
+      try {
+        recordUsage(
+          connection.id,
+          0,
+          (usage?.prompt_tokens ?? 0) + (usage?.completion_tokens ?? 0),
+          Date.now(),
+          windowMs
+        );
+      } catch (err) {
+        debugLogError("quota.record_failed", { connectionId: connection.id, error: String(err) });
+      }
       debugLog("response.success", {
         requestId,
         connectionId: connection.id,

@@ -1,6 +1,7 @@
 // src/components/dashboard/ui.tsx
 "use client";
 
+import React from "react";
 import { cn } from "@/lib/cn.ts";
 
 /** Terracotta primary action. */
@@ -107,4 +108,155 @@ export function SectionTitle({ children }: { children: React.ReactNode }) {
       {children}
     </h2>
   );
+}
+
+// ── Plan 1b UI primitives (project tokens only; no src/shared/components) ───────
+
+export type StatusTone = "ok" | "warn" | "error" | "idle" | "muted";
+
+const STATUS_TONE_CLASS: Record<StatusTone, string> = {
+  ok: "bg-success",
+  warn: "bg-amber-400",
+  error: "bg-error",
+  idle: "bg-text-muted",
+  muted: "bg-white/20",
+};
+
+/** A small colored status dot with an optional label. */
+export function StatusDot({ tone, label }: { tone: StatusTone; label?: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className={cn("h-2 w-2 rounded-full", STATUS_TONE_CLASS[tone])} />
+      {label && <span className="text-xs text-text-muted">{label}</span>}
+    </span>
+  );
+}
+
+/** Styled `<select>` wrapper. */
+export function Select({
+  className,
+  ...props
+}: React.SelectHTMLAttributes<HTMLSelectElement>) {
+  return <select {...props} className={cn(inputClass, className)} />;
+}
+
+/** Minimal styled table primitives. */
+export function Table({
+  className,
+  ...props
+}: React.TableHTMLAttributes<HTMLTableElement>) {
+  return (
+    <table
+      {...props}
+      className={cn("w-full border-collapse text-sm text-text-main", className)}
+    />
+  );
+}
+
+export function Th({ className, ...props }: React.ThHTMLAttributes<HTMLTableCellElement>) {
+  return (
+    <th
+      {...props}
+      className={cn(
+        "border-b border-border px-2 py-1.5 text-left text-[11px] font-medium uppercase tracking-wide text-text-muted",
+        className
+      )}
+    />
+  );
+}
+
+export function Td({ className, ...props }: React.TdHTMLAttributes<HTMLTableCellElement>) {
+  return <td {...props} className={cn("border-b border-border px-2 py-1.5", className)} />;
+}
+
+/** Controlled modal dialog. Closes on backdrop click and Escape. */
+export function Modal({
+  open,
+  onClose,
+  title,
+  children,
+  footer,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  children: React.ReactNode;
+  footer?: React.ReactNode;
+}) {
+  if (!open) return null;
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") onClose();
+      }}
+    >
+      <div
+        className="flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-card border border-border bg-card shadow-soft"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+          <h3 className="text-sm font-semibold text-text-main">{title}</h3>
+          <button
+            onClick={onClose}
+            className="rounded-control px-2 py-1 text-xs text-text-muted hover:bg-bg-subtle"
+            aria-label="Close"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="overflow-y-auto px-4 py-3">{children}</div>
+        {footer && <div className="border-t border-border px-4 py-3">{footer}</div>}
+      </div>
+    </div>
+  );
+}
+
+type ToastTone = "ok" | "error" | "info";
+interface ToastItem {
+  id: number;
+  message: string;
+  tone: ToastTone;
+}
+
+const ToastCtx = React.createContext<{
+  toast: (message: string, tone?: ToastTone) => void;
+}>({ toast: () => {} });
+
+export function ToastProvider({ children }: { children: React.ReactNode }) {
+  const [items, setItems] = React.useState<ToastItem[]>([]);
+  const counter = React.useRef(0);
+  const toast = React.useCallback((message: string, tone: ToastTone = "info") => {
+    const id = ++counter.current;
+    setItems((prev) => [...prev, { id, message, tone }]);
+    setTimeout(() => setItems((prev) => prev.filter((t) => t.id !== id)), 4000);
+  }, []);
+  return (
+    <ToastCtx.Provider value={{ toast }}>
+      {children}
+      <div className="pointer-events-none fixed bottom-4 right-4 z-[60] flex flex-col gap-2">
+        {items.map((t) => (
+          <div
+            key={t.id}
+            className={cn(
+              "pointer-events-auto rounded-control border px-3 py-2 text-xs shadow-soft",
+              t.tone === "ok" && "border-success/40 bg-success/10 text-success",
+              t.tone === "error" && "border-error/40 bg-error/10 text-error",
+              t.tone === "info" && "border-border bg-card text-text-main"
+            )}
+          >
+            {t.message}
+          </div>
+        ))}
+      </div>
+    </ToastCtx.Provider>
+  );
+}
+
+/** Consume the toast emitter. Must be rendered inside <ToastProvider>. */
+export function useToast() {
+  return React.useContext(ToastCtx);
 }
