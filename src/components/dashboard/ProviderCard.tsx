@@ -3,9 +3,10 @@ import Link from "next/link";
 import { listConnections } from "@/lib/db/connections.ts";
 import type { Connection, Provider } from "@/lib/db/types.ts";
 import { ConnectionList } from "./ConnectionList.tsx";
-import { AddConnectionForm } from "./AddConnectionForm.tsx";
+import { AddConnectionButton } from "./AddConnectionButton.tsx";
 import { RemoveProviderButton } from "./RemoveProviderButton.tsx";
 import { ProviderPrefixEditor } from "./ProviderPrefixEditor.tsx";
+import { ToastProvider } from "./ui.tsx";
 
 // Plain (non-component) helper so the impure `Date.now()` read happens outside
 // the component render body — keeps `react-hooks/purity` happy while still
@@ -47,12 +48,14 @@ export function ProviderCard({ provider }: { provider: Provider }) {
         </div>
         <RemoveProviderButton providerId={provider.id} />
       </div>
-      <ConnectionList
-        items={connections.map((c) => ({ connection: c, healthy: isConnectionHealthy(c) }))}
-      />
-      <div className="mt-2">
-        <AddConnectionForm providerId={provider.id} />
-      </div>
+      <ToastProvider>
+        <ConnectionList
+          items={connections.map((c) => ({ connection: c, healthy: isConnectionHealthy(c) }))}
+        />
+        <div className="mt-2">
+          <AddConnectionButton providerId={provider.id} providerName={provider.name} />
+        </div>
+      </ToastProvider>
     </section>
   );
 }

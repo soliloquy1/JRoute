@@ -3,7 +3,7 @@ import { listCatalogProviders } from "@/lib/catalog/index.ts";
 import { listProviders } from "@/lib/db/providers.ts";
 import { CatalogGrid } from "@/components/dashboard/CatalogGrid.tsx";
 import { ProviderCard } from "@/components/dashboard/ProviderCard.tsx";
-import { AddProviderForm } from "@/components/dashboard/AddProviderForm.tsx";
+import { AddProviderButton } from "@/components/dashboard/AddProviderButton.tsx";
 import { SectionTitle } from "@/components/dashboard/ui.tsx";
 
 export default function ProvidersPage() {
@@ -19,7 +19,7 @@ export default function ProvidersPage() {
             attach a connection with its API key or OAuth token
           </p>
         </div>
-        <AddProviderForm />
+        <AddProviderButton existingIds={providers.map((p) => p.id)} />
       </div>
       <CatalogGrid entries={catalog} />
 

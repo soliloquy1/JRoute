@@ -20,6 +20,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import type { Connection } from "@/lib/db/types.ts";
 import { ConnectionRow } from "./ConnectionRow.tsx";
+import { useToast } from "./ui.tsx";
 
 export interface ConnectionListItem {
   connection: Connection;
@@ -40,11 +41,17 @@ function SortableRow({ connection, healthy }: ConnectionListItem) {
 
 export function ConnectionList({ items: initialItems }: { items: ConnectionListItem[] }) {
   const router = useRouter();
+  const { toast } = useToast();
   const [items, setItems] = useState(initialItems);
 
+  // Only re-sync from the server when the SET of connections changes (add/remove) — not on
+  // every refresh. This keeps an optimistic local reorder in place (no flicker) while still
+  // picking up added/removed connections.
+  const idsKey = initialItems.map((i) => i.connection.id).join(",");
   useEffect(() => {
     setItems(initialItems);
-  }, [initialItems]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idsKey]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
@@ -61,10 +68,13 @@ export function ConnectionList({ items: initialItems }: { items: ConnectionListI
       body: JSON.stringify({ orderedIds: reordered.map((item) => item.connection.id) }),
     });
     if (!res.ok) {
-      console.error("Failed to persist connection reorder");
+      // Surface the failure to the operator (not console.error) and revert to server truth.
+      toast("Failed to save connection order", "error");
+      router.refresh();
       return;
     }
-    router.refresh();
+    // Success: the optimistic order is already shown. Skipping router.refresh() avoids the
+    // reorder flicker (a full reload would briefly repaint the pre-reorder order).
   }
 
   return (

@@ -8,8 +8,8 @@ import type { CatalogProvider } from "@/lib/catalog/providers.ts";
 
 /**
  * Adds a curated catalog provider to the operator's configured providers (idempotent
- * upsert). Mirrors AddProviderForm's fetch shape but seeded from the catalog entry, so
- * the catalog grid is directly actionable.
+ * upsert). Mirrors the dashboard add-provider modal's fetch shape but seeded from the
+ * catalog entry, so the catalog grid is directly actionable.
  */
 export function CatalogAddButton({ entry }: { entry: CatalogProvider }) {
   const router = useRouter();

@@ -60,20 +60,25 @@ export function createConnection(
   providerId: string,
   label: string,
   apiKey: string,
-  extra: { providerSpecificData?: string | null; quotaWindowThresholds?: string | null } = {}
+  extra: {
+    providerSpecificData?: string | null;
+    quotaWindowThresholds?: string | null;
+    priority?: number;
+  } = {}
 ): number {
   const info = getDb()
     .prepare(
       `INSERT INTO connections
-        (provider_id, label, api_key, provider_specific_data, quota_window_thresholds_json)
-       VALUES (?, ?, ?, ?, ?)`
+        (provider_id, label, api_key, provider_specific_data, quota_window_thresholds_json, priority)
+       VALUES (?, ?, ?, ?, ?, ?)`
     )
     .run(
       providerId,
       label,
       encrypt(apiKey),
       extra.providerSpecificData ?? null,
-      extra.quotaWindowThresholds ?? null
+      extra.quotaWindowThresholds ?? null,
+      extra.priority ?? 100
     );
   return Number(info.lastInsertRowid);
 }
