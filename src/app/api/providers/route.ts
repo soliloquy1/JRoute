@@ -33,14 +33,15 @@ export async function POST(req: Request): Promise<Response> {
     const parsed = ProviderSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return jsonError(400, "Invalid request body");
     const d = parsed.data;
+    const { overwrite, ...rest } = d;
     // Create-only guard: an existing id without explicit overwrite is rejected so a
     // duplicate custom provider can't silently overwrite an operator/OAuth provider.
-    if (!d.overwrite && getProvider(d.id)) {
+    if (!overwrite && getProvider(rest.id)) {
       return jsonError(409, "A provider with this id already exists");
     }
     try {
       upsertProvider({
-        ...d,
+        ...rest,
         providerSpecificData: d.providerSpecificData
           ? JSON.stringify(d.providerSpecificData)
           : null,

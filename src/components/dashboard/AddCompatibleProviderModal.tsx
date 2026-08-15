@@ -83,21 +83,24 @@ export function AddCompatibleProviderModal({
       }
 
       // Optionally attach a connection so the provider is usable immediately.
+      // The provider was already created above, so a connection failure (network or
+      // otherwise) must NOT abort close/refresh — it is a separate, recoverable step.
       if (apiKey.trim()) {
-        const cRes = await fetch("/api/connections", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            providerId: values.id.trim(),
-            label: "primary",
-            apiKey: apiKey.trim(),
-          }),
-        });
-        if (!cRes.ok) {
-          toast("Provider added, but the connection failed", "error");
-          onClose();
-          router.refresh();
-          return;
+        try {
+          const cRes = await fetch("/api/connections", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              providerId: values.id.trim(),
+              label: "primary",
+              apiKey: apiKey.trim(),
+            }),
+          });
+          if (!cRes.ok) {
+            toast("Provider added, but the connection failed", "error");
+          }
+        } catch {
+          toast("Provider added, but the connection failed (network)", "error");
         }
       }
 

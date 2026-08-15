@@ -2,7 +2,6 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { useRouter } from "next/navigation";
 import {
   DndContext,
   closestCenter,
@@ -40,7 +39,6 @@ function SortableRow({ connection, healthy }: ConnectionListItem) {
 }
 
 export function ConnectionList({ items: initialItems }: { items: ConnectionListItem[] }) {
-  const router = useRouter();
   const { toast } = useToast();
   // Keep only an ORDER override in state. Rendered items are derived from the latest server
   // props (so health/label/decrypt updates flow through on refresh) reordered by the saved
