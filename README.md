@@ -29,7 +29,12 @@ became a target of 20–25k.
 
 ## Requirements
 
-- Node.js `>=22.0.0 <23` or `>=24.0.0 <27`
+- **Node.js 22 LTS is recommended** (and required for Windows). `jroute` uses the native
+  `better-sqlite3` module; its prebuilt binary is most reliably available on Node 22 LTS, so
+  Windows users in particular should install Node 22 LTS rather than Node 24.
+- Supported range: `>=22.0.0 <23` or `>=24.0.0 <27` (a working `better-sqlite3` prebuild is
+  needed for your Node version; if `npm install` cannot fetch one and no build tools are
+  present, install Node 22 LTS or add the C++ build tools).
 - An API key from at least one LLM provider
 
 ## License
