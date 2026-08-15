@@ -6,15 +6,9 @@ JRoute exposes an OpenAI-compatible endpoint that Janitor's frontend calls direc
 forwards requests to whichever LLM provider you configure, and adds three things Janitor
 cannot do on its own:
 
-- **Custom prompt assembly** — inject your own system blocks around the character card
-  without editing anything inside Janitor, with per-key presets.
-- **Lorebooks** — JavaScript you write yourself, executed in a sandbox on every message,
-  injecting context at a controlled depth in the conversation.
-- **MCP tools** — server-side tool execution, web search above all. Janitor has no MCP
-  client, so JRoute runs the tool loop itself and returns one clean answer.
+This README is not complete. Use [this](https://soliloquy.gitbook.io/jroute) instead. 
 
-> **Status: under construction.** The foundation is being built now. Nothing here is
-> usable yet.
+> **Status: under construction.**
 
 ## Why a fork
 
