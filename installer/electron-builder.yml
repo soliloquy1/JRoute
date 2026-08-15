@@ -1,0 +1,51 @@
+appId: org.jroute.installer
+productName: JRoute
+copyright: Copyright © 2026 JRoute
+
+directories:
+  output: dist
+  buildResources: build
+
+# The installer is a thin wrapper. It does NOT bundle JRoute or Node — both are
+# downloaded at install time over the network. So we only ship our own source.
+files:
+  - src/**/*
+  - build/**/*
+  - package.json
+
+# Signing is reserved but disabled for v0.2.0-beta. Wire these CI secrets later:
+#   CSC_LINK / CSC_KEY_PASSWORD  (macOS/Windows Authenticode)
+#   APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID (notarization)
+mac:
+  category: public.app-category.utilities
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+linux:
+  category: Utility
+  target:
+    - target: AppImage
+      arch:
+        - x64
+        - arm64
+    - target: deb
+      arch:
+        - x64
+        - arm64
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+
+# Reserved signing hook. No-op until CI secrets + certs are provided.
+afterSign: build/afterSign.cjs

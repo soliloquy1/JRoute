@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:;" />
+    <title>JRoute Setup</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- ===================== WIZARD ===================== -->
+      <section id="wizard" class="view">
+        <aside class="sidebar">
+          <div class="brand"><span class="logo">J</span> JRoute</div>
+          <ol id="steps">
+            <li data-step="welcome" class="active">Welcome</li>
+            <li data-step="location">Install location</li>
+            <li data-step="portpass">Port &amp; admin</li>
+            <li data-step="version">Version</li>
+            <li data-step="data">Data directory</li>
+            <li data-step="installing">Installing</li>
+            <li data-step="done">Done</li>
+          </ol>
+          <div class="foot">v0.2.0-beta · JanitorAI reverse proxy</div>
+        </aside>
+
+        <main class="content">
+          <!-- Welcome -->
+          <div class="panel" data-step="welcome">
+            <h1>Welcome to JRoute</h1>
+            <p>
+              JRoute is a self-hosted reverse proxy for JanitorAI — one
+              OpenAI-compatible endpoint in front of your own LLM providers.
+            </p>
+            <p class="muted">
+              This wizard will download a Node.js runtime, fetch and build JRoute, and run
+              it locally. An internet connection is required (it clones/builds during setup).
+            </p>
+            <div class="actions end">
+              <button class="primary" data-next>Get started</button>
+            </div>
+          </div>
+
+          <!-- Location -->
+          <div class="panel hidden" data-step="location">
+            <h1>Install location &amp; shortcuts</h1>
+            <label class="field">
+              <span>Install directory</span>
+              <div class="row">
+                <input id="installDir" type="text" />
+                <button class="ghost" id="pickInstall">Browse…</button>
+              </div>
+            </label>
+            <label class="check"><input type="checkbox" id="scDesktop" /> Create a Desktop shortcut</label>
+            <label class="check"><input type="checkbox" id="scStartMenu" /> Add to Start Menu / Applications</label>
+            <label class="check"><input type="checkbox" id="scAutoStart" checked /> Start JRoute at login</label>
+            <div class="actions">
+              <button class="ghost" data-prev>Back</button>
+              <button class="primary" data-next>Next</button>
+            </div>
+          </div>
+
+          <!-- Port & admin -->
+          <div class="panel hidden" data-step="portpass">
+            <h1>Port &amp; admin password</h1>
+            <label class="field">
+              <span>Port</span>
+              <div class="row">
+                <input id="port" type="number" min="1" max="65535" />
+                <button class="ghost" id="checkPort">Check</button>
+              </div>
+              <small id="portHint" class="muted"></small>
+            </label>
+            <label class="field">
+              <span>Admin password (seeded on first boot)</span>
+              <input id="adminPassword" type="password" placeholder="leave blank to auto-generate" />
+              <small class="muted">
+                JRoute forces a password change on first login. This only pre-seeds the
+                <code>admin</code> account.
+              </small>
+            </label>
+            <div class="actions">
+              <button class="ghost" data-prev>Back</button>
+              <button class="primary" data-next>Next</button>
+            </div>
+          </div>
+
+          <!-- Version -->
+          <div class="panel hidden" data-step="version">
+            <h1>Version / channel</h1>
+            <label class="field">
+              <span>Channel</span>
+              <select id="channel">
+                <option value="release">Latest release tag (recommended)</option>
+                <option value="main">main branch (cutting edge)</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Specific ref (optional, overrides channel)</span>
+              <input id="explicitRef" type="text" placeholder="e.g. v0.2.0 or a branch name" />
+            </label>
+            <div class="actions">
+              <button class="ghost" data-prev>Back</button>
+              <button class="primary" data-next>Next</button>
+            </div>
+          </div>
+
+          <!-- Data -->
+          <div class="panel hidden" data-step="data">
+            <h1>Data directory</h1>
+            <p class="muted">
+              Stores your SQLite database and provider credentials. Point this somewhere that
+              survives reinstalls if you want to keep your setup.
+            </p>
+            <label class="field">
+              <span>Data directory</span>
+              <div class="row">
+                <input id="dataDir" type="text" />
+                <button class="ghost" id="pickData">Browse…</button>
+              </div>
+            </label>
+            <label class="check">
+              <input type="checkbox" id="encrypt" checked />
+              Generate an encryption key so credentials are encrypted at rest
+            </label>
+            <div class="actions">
+              <button class="ghost" data-prev>Back</button>
+              <button class="primary" id="beginInstall">Install</button>
+            </div>
+          </div>
+
+          <!-- Installing -->
+          <div class="panel hidden" data-step="installing">
+            <h1>Installing…</h1>
+            <p class="muted">This can take several minutes on first run. Keep this window open.</p>
+            <pre id="installLog" class="log"></pre>
+          </div>
+
+          <!-- Done -->
+          <div class="panel hidden" data-step="done">
+            <h1>🎉 JRoute is ready</h1>
+            <p>JRoute is running locally. Open the dashboard to start configuring providers.</p>
+            <div class="urlbox">
+              <code id="doneUrl">http://localhost:20128/</code>
+            </div>
+            <div class="actions end">
+              <button class="ghost" id="doneLogs">View logs</button>
+              <button class="primary" id="openDashboard">Open Dashboard</button>
+            </div>
+          </div>
+        </main>
+      </section>
+
+      <!-- ===================== MANAGER ===================== -->
+      <section id="manager" class="view hidden">
+        <header class="bar">
+          <div class="brand"><span class="logo">J</span> JRoute</div>
+          <div id="statusPill" class="pill off">Stopped</div>
+        </header>
+        <main class="mgr">
+          <div class="card">
+            <div class="kv"><span>Status</span><b id="mStatus">—</b></div>
+            <div class="kv"><span>URL</span><b><a id="mUrl" href="#">http://localhost:20128/</a></b></div>
+            <div class="kv"><span>Channel</span><b id="mChannel">—</b></div>
+            <div class="kv"><span>Ref</span><b id="mRef">—</b></div>
+            <div class="kv"><span>Installed</span><b id="mInstalled">—</b></div>
+          </div>
+          <div class="mgr-actions">
+            <button class="primary" id="mOpen">Open Dashboard</button>
+            <button class="secondary" id="mToggle">Start</button>
+            <button class="secondary" id="mUpdate">Update JRoute</button>
+            <button class="ghost" id="mLogs">View Logs</button>
+            <button class="ghost danger" id="mReset">Reset</button>
+          </div>
+          <pre id="mgrLog" class="log hidden"></pre>
+          <div id="updateProgress" class="muted hidden">Updating…</div>
+        </main>
+      </section>
+    </div>
+    <script src="renderer.js"></script>
+  </body>
+</html>
