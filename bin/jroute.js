@@ -23,9 +23,13 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import open from "open";
 import { parseArgs } from "./parseArgs.mjs";
+import { resolveNextBin } from "./resolveNextBin.mjs";
 
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const nextBin = join(packageRoot, "node_modules", ".bin", "next");
+// Not `node_modules/.bin/next`: that's a POSIX shell script on Windows with no `.cmd` shim
+// that spawn() can't launch. resolveNextBin() returns Next's real `dist/bin/next` JS entry
+// (see bin/resolveNextBin.mjs) so the CLI runs identically on every platform.
+const nextBin = resolveNextBin(packageRoot);
 // Matches next.config.mjs's own default and its `NEXT_DIST_DIR` override — must be kept in
 // relative form (not resolved against packageRoot) because the standalone server bundle
 // mirrors this same relative path inside itself for its own static-asset lookup.
@@ -83,21 +87,19 @@ async function openBrowserWhenReady() {
 
 function runNext(nextArgs) {
   const env = { ...process.env, PORT: port };
-  const child = spawn(nextBin, nextArgs, { cwd: packageRoot, stdio: "inherit", env });
+  // Spawn the Node binary against Next's JS entry — cross-platform (see resolveNextBin).
+  const child = spawn(process.execPath, [nextBin, ...nextArgs], {
+    cwd: packageRoot,
+    stdio: "inherit",
+    env,
+  });
   if (shouldOpenBrowser) openBrowserWhenReady().catch(() => {});
-  child.on("exit", (code, signal) => {
-    if (signal) process.kill(process.pid, signal);
-    else process.exit(code ?? 0);
-  });
-  child.on("error", (err) => {
-    console.error(`[jroute] failed to launch Next.js: ${err.message}`);
-    process.exit(1);
-  });
+  forwardChildExit(child, "[jroute] failed to launch Next.js");
 }
 
 function buildSync() {
   console.log("[jroute] Building for production (this can take a while)...");
-  const build = spawnSync(nextBin, ["build"], {
+  const build = spawnSync(process.execPath, [nextBin, "build"], {
     cwd: packageRoot,
     stdio: "inherit",
     env: process.env,
@@ -132,17 +134,39 @@ function runStandaloneServer() {
     env,
   });
   if (shouldOpenBrowser) openBrowserWhenReady().catch(() => {});
+  forwardChildExit(child, "[jroute] failed to launch the production server");
+}
+
+/**
+ * Replicate a child's exit onto this process. When the child died on a signal we re-deliver
+ * that signal to ourselves so the CLI exits with the same code a direct invocation would
+ * (e.g. 130 for SIGINT on Ctrl+C) — never a hardcoded 1. Windows only honors SIGINT/SIGTERM
+ * for process.kill; any other signal either can't occur there or can't be forwarded, in which
+ * case we fall back to a non-zero exit instead of crashing on an unsupported-signal throw.
+ */
+function forwardChildExit(child, errorPrefix) {
   child.on("exit", (code, signal) => {
-    if (signal) process.kill(process.pid, signal);
-    else process.exit(code ?? 0);
+    if (signal) {
+      try {
+        if (signal === "SIGINT" || signal === "SIGTERM") {
+          process.kill(process.pid, signal);
+          return;
+        }
+      } catch {
+        // signal not supported on this platform — fall through to a clean non-zero exit
+      }
+      process.exit(1);
+    } else {
+      process.exit(code ?? 0);
+    }
   });
   child.on("error", (err) => {
-    console.error(`[jroute] failed to launch the production server: ${err.message}`);
+    console.error(`${errorPrefix}: ${err.message}`);
     process.exit(1);
   });
 }
 
-if (!existsSync(nextBin)) {
+if (!nextBin || !existsSync(nextBin)) {
   console.error(
     "[jroute] Next.js is not installed in this package's node_modules. " +
       "Reinstall with `npm install` in the package directory."
