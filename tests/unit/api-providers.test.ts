@@ -39,17 +39,17 @@ test("POST /api/providers with a session upserts a provider", async () => {
       method: "POST",
       headers: authHeaders,
       body: JSON.stringify({
-        id: "openai",
-        name: "OpenAI",
+        id: "custom-prov-1",
+        name: "Custom Provider 1",
         kind: "apikey",
-        baseUrl: "https://api.openai.com/v1",
+        baseUrl: "https://api.custom-provider-1.com/v1",
         wireFormat: "openai",
         enabled: true,
       }),
     })
   );
   assert.equal(res.status, 200);
-  assert.equal(getProvider("openai")?.name, "OpenAI");
+  assert.equal(getProvider("custom-prov-1")?.name, "Custom Provider 1");
 });
 
 test("POST /api/providers with an invalid body is 400", async () => {
@@ -61,6 +61,55 @@ test("POST /api/providers with an invalid body is 400", async () => {
     })
   );
   assert.equal(res.status, 400);
+});
+
+test("POST /api/providers with an existing id and no overwrite is 409", async () => {
+  const body = {
+    id: "test-prov-1",
+    name: "Test Provider 1",
+    kind: "apikey",
+    baseUrl: "https://api.test-provider-1.com/v1",
+    wireFormat: "openai",
+    enabled: true,
+  };
+  const first = await providers.POST(
+    new Request("https://x/api/providers", {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify(body),
+    })
+  );
+  assert.equal(first.status, 200);
+  const second = await providers.POST(
+    new Request("https://x/api/providers", {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({ ...body, name: "Test Provider 1 (changed)" }),
+    })
+  );
+  assert.equal(second.status, 409);
+  assert.equal(getProvider("test-prov-1")?.name, "Test Provider 1");
+});
+
+test("POST /api/providers with an existing id and overwrite:true is 200", async () => {
+  const body = {
+    id: "test-prov-1",
+    name: "Test Provider 1 (overwritten)",
+    kind: "apikey",
+    baseUrl: "https://api.test-provider-1.com/v1",
+    wireFormat: "openai",
+    enabled: true,
+    overwrite: true,
+  };
+  const res = await providers.POST(
+    new Request("https://x/api/providers", {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify(body),
+    })
+  );
+  assert.equal(res.status, 200);
+  assert.equal(getProvider("test-prov-1")?.name, "Test Provider 1 (overwritten)");
 });
 
 test("DELETE /api/providers/:id removes the provider", async () => {

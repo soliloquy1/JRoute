@@ -20,7 +20,7 @@ import {
 
 /**
  * Modal to add a custom OpenAI/Anthropic/Gemini-compatible provider (and optionally an
- * API-key connection). Replaces the inline AddProviderForm. Client-side validation covers
+ * API-key connection). Replaces the old inline AddProviderForm. Client-side validation covers
  * the provider id regex, required name, a valid http(s) base URL, an optional prefix, and
  * duplicate-id detection against `existingIds`.
  */
@@ -50,57 +50,65 @@ export function AddCompatibleProviderModal({
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (saving) return;
     const fieldErrors = validateAddCompatibleProvider(values, existingIds);
     setErrors(fieldErrors);
     if (Object.keys(fieldErrors).length > 0) return;
 
     setSaving(true);
-    const res = await fetch("/api/providers", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        id: values.id.trim(),
-        name: values.name.trim(),
-        kind: "apikey",
-        baseUrl: values.baseUrl.trim(),
-        wireFormat: values.wireFormat,
-        enabled: true,
-        modelPrefix: values.modelPrefix.trim(),
-      }),
-    });
-    if (!res.ok) {
-      const body = (await res.json().catch(() => null)) as {
-        error?: { message?: string } | string;
-      } | null;
-      const msg =
-        typeof body?.error === "string"
-          ? body.error
-          : body?.error?.message ?? "Failed to add provider";
-      setSaving(false);
-      toast(msg, "error");
-      return;
-    }
-
-    // Optionally attach a connection so the provider is usable immediately.
-    if (apiKey.trim()) {
-      const cRes = await fetch("/api/connections", {
+    try {
+      const res = await fetch("/api/providers", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ providerId: values.id.trim(), label: "primary", apiKey: apiKey.trim() }),
+        body: JSON.stringify({
+          id: values.id.trim(),
+          name: values.name.trim(),
+          kind: "apikey",
+          baseUrl: values.baseUrl.trim(),
+          wireFormat: values.wireFormat,
+          enabled: true,
+          modelPrefix: values.modelPrefix.trim(),
+        }),
       });
-      if (!cRes.ok) {
-        setSaving(false);
-        toast("Provider added, but the connection failed", "error");
-        onClose();
-        router.refresh();
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as {
+          error?: { message?: string } | string;
+        } | null;
+        const msg =
+          typeof body?.error === "string"
+            ? body.error
+            : body?.error?.message ?? "Failed to add provider";
+        toast(msg, "error");
         return;
       }
-    }
 
-    setSaving(false);
-    toast("Provider added", "ok");
-    onClose();
-    router.refresh();
+      // Optionally attach a connection so the provider is usable immediately.
+      if (apiKey.trim()) {
+        const cRes = await fetch("/api/connections", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            providerId: values.id.trim(),
+            label: "primary",
+            apiKey: apiKey.trim(),
+          }),
+        });
+        if (!cRes.ok) {
+          toast("Provider added, but the connection failed", "error");
+          onClose();
+          router.refresh();
+          return;
+        }
+      }
+
+      toast("Provider added", "ok");
+      onClose();
+      router.refresh();
+    } catch {
+      toast("Network error — could not add provider", "error");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (

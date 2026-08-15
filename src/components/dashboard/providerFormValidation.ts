@@ -44,7 +44,7 @@ export function validateAddCompatibleProvider(
     }
   }
 
-  if (values.modelPrefix && !MODEL_PREFIX_RE.test(values.modelPrefix)) {
+  if (values.modelPrefix && !MODEL_PREFIX_RE.test(values.modelPrefix.trim())) {
     errors.modelPrefix = "Prefix must be empty or lowercase letters/digits";
   }
 

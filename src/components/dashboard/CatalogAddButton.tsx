@@ -17,30 +17,45 @@ export function CatalogAddButton({ entry }: { entry: CatalogProvider }) {
   const [error, setError] = useState<string | null>(null);
 
   async function onAdd() {
+    if (saving) return;
     setSaving(true);
     setError(null);
-    const res = await fetch("/api/providers", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        id: entry.id,
-        name: entry.name,
-        kind: entry.kind,
-        baseUrl: entry.baseUrl,
-        wireFormat: entry.wireFormat,
-        enabled: true,
-        modelPrefix: entry.modelPrefix ?? "",
-        oauthProvider: entry.oauthProvider ?? undefined,
-        providerSpecificData: entry.providerSpecificDefaults ?? undefined,
-      }),
-    });
-    setSaving(false);
-    if (!res.ok) {
-      const body = (await res.json().catch(() => null)) as { error?: string } | null;
-      setError(body?.error ?? "Failed to add provider");
-      return;
+    try {
+      const res = await fetch("/api/providers", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          id: entry.id,
+          name: entry.name,
+          kind: entry.kind,
+          baseUrl: entry.baseUrl,
+          wireFormat: entry.wireFormat,
+          enabled: true,
+          modelPrefix: entry.modelPrefix ?? "",
+          oauthProvider: entry.oauthProvider ?? undefined,
+          providerSpecificData: entry.providerSpecificDefaults ?? undefined,
+          // Catalog adds are an intentional idempotent upsert (mirrors seeding); the
+          // add-provider modal is create-only and omits this, so it gets the 409 guard.
+          overwrite: true,
+        }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as {
+          error?: string | { message?: string };
+        } | null;
+        const msg =
+          typeof body?.error === "string"
+            ? body.error
+            : body?.error?.message ?? "Failed to add provider";
+        setError(msg);
+        return;
+      }
+      router.refresh();
+    } catch {
+      setError("Network error — could not add provider");
+    } finally {
+      setSaving(false);
     }
-    router.refresh();
   }
 
   return (
@@ -48,7 +63,7 @@ export function CatalogAddButton({ entry }: { entry: CatalogProvider }) {
       <PrimaryButton onClick={onAdd} disabled={saving}>
         {saving ? "Adding…" : "Add"}
       </PrimaryButton>
-      {error && <span className="text-xs text-red-400">{error}</span>}
+      {error && <span className="text-xs text-error">{error}</span>}
     </div>
   );
 }

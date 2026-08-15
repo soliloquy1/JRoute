@@ -2,7 +2,7 @@
 import { z } from "zod";
 import { authenticateDashboard } from "@/lib/auth/guard.ts";
 import { jsonError } from "@jroute/errors.ts";
-import { upsertProvider } from "@/lib/db/providers.ts";
+import { upsertProvider, getProvider } from "@/lib/db/providers.ts";
 
 const ProviderSchema = z.object({
   id: z
@@ -22,6 +22,9 @@ const ProviderSchema = z.object({
     .default(""),
   oauthProvider: z.string().min(1).optional(),
   providerSpecificData: z.record(z.string(), z.unknown()).optional(),
+  // The catalog grid does an intentional idempotent upsert; operator "add provider"
+  // flow must not clobber an existing provider's OAuth config, so it requires overwrite.
+  overwrite: z.boolean().optional().default(false),
 });
 
 export async function POST(req: Request): Promise<Response> {
@@ -29,8 +32,13 @@ export async function POST(req: Request): Promise<Response> {
   try {
     const parsed = ProviderSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return jsonError(400, "Invalid request body");
+    const d = parsed.data;
+    // Create-only guard: an existing id without explicit overwrite is rejected so a
+    // duplicate custom provider can't silently overwrite an operator/OAuth provider.
+    if (!d.overwrite && getProvider(d.id)) {
+      return jsonError(409, "A provider with this id already exists");
+    }
     try {
-      const d = parsed.data;
       upsertProvider({
         ...d,
         providerSpecificData: d.providerSpecificData

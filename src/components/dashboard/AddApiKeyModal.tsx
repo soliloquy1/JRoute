@@ -7,7 +7,7 @@ import { Modal, PrimaryButton, GhostButton, Field, inputClass, InlineError, useT
 import { validateAddApiKey } from "./providerFormValidation.ts";
 
 /**
- * Modal to attach an API-key connection to a provider. Replaces the inline
+ * Modal to attach an API-key connection to a provider. Replaces the old inline
  * AddConnectionForm: validates client-side (label/key required, non-negative integer
  * priority), surfaces errors via a visible Toast (never console.error), and refreshes
  * server state on success.
@@ -31,36 +31,42 @@ export function AddApiKeyModal({
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (saving) return;
     const fieldErrors = validateAddApiKey({ label, apiKey, priority });
     setErrors(fieldErrors);
     if (Object.keys(fieldErrors).length > 0) return;
 
     setSaving(true);
-    const res = await fetch("/api/connections", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        providerId,
-        label: label.trim(),
-        apiKey: apiKey.trim(),
-        priority: priority.trim() === "" ? 100 : Number(priority),
-      }),
-    });
-    setSaving(false);
-    if (!res.ok) {
-      const body = (await res.json().catch(() => null)) as {
-        error?: { message?: string } | string;
-      } | null;
-      const msg =
-        typeof body?.error === "string"
-          ? body.error
-          : body?.error?.message ?? "Failed to add connection";
-      toast(msg, "error");
-      return;
+    try {
+      const res = await fetch("/api/connections", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          providerId,
+          label: label.trim(),
+          apiKey: apiKey.trim(),
+          priority: priority.trim() === "" ? 100 : Number(priority),
+        }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as {
+          error?: { message?: string } | string;
+        } | null;
+        const msg =
+          typeof body?.error === "string"
+            ? body.error
+            : body?.error?.message ?? "Failed to add connection";
+        toast(msg, "error");
+        return;
+      }
+      toast("Connection added", "ok");
+      onClose();
+      router.refresh();
+    } catch {
+      toast("Network error — could not add connection", "error");
+    } finally {
+      setSaving(false);
     }
-    toast("Connection added", "ok");
-    onClose();
-    router.refresh();
   }
 
   return (

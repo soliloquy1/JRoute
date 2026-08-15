@@ -1,7 +1,7 @@
 // src/components/dashboard/ConnectionList.tsx
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   DndContext,
@@ -42,16 +42,20 @@ function SortableRow({ connection, healthy }: ConnectionListItem) {
 export function ConnectionList({ items: initialItems }: { items: ConnectionListItem[] }) {
   const router = useRouter();
   const { toast } = useToast();
-  const [items, setItems] = useState(initialItems);
+  // Keep only an ORDER override in state. Rendered items are derived from the latest server
+  // props (so health/label/decrypt updates flow through on refresh) reordered by the saved
+  // order. This kills both the reorder flicker (no router.refresh() on success) and the
+  // content-staleness regression (items are never a frozen local copy).
+  const [orderOverride, setOrderOverride] = useState<number[] | null>(null);
 
-  // Only re-sync from the server when the SET of connections changes (add/remove) — not on
-  // every refresh. This keeps an optimistic local reorder in place (no flicker) while still
-  // picking up added/removed connections.
-  const idsKey = initialItems.map((i) => i.connection.id).join(",");
-  useEffect(() => {
-    setItems(initialItems);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [idsKey]);
+  const items = useMemo(() => {
+    if (!orderOverride) return initialItems;
+    const byId = new Map(initialItems.map((i) => [i.connection.id, i]));
+    if (orderOverride.length === initialItems.length && orderOverride.every((id) => byId.has(id))) {
+      return orderOverride.map((id) => byId.get(id)!);
+    }
+    return initialItems;
+  }, [initialItems, orderOverride]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
@@ -61,20 +65,23 @@ export function ConnectionList({ items: initialItems }: { items: ConnectionListI
     const oldIndex = items.findIndex((item) => item.connection.id === active.id);
     const newIndex = items.findIndex((item) => item.connection.id === over.id);
     const reordered = arrayMove(items, oldIndex, newIndex);
-    setItems(reordered);
-    const res = await fetch("/api/connections/reorder", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ orderedIds: reordered.map((item) => item.connection.id) }),
-    });
-    if (!res.ok) {
-      // Surface the failure to the operator (not console.error) and revert to server truth.
+    setOrderOverride(reordered.map((item) => item.connection.id));
+    try {
+      const res = await fetch("/api/connections/reorder", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ orderedIds: reordered.map((item) => item.connection.id) }),
+      });
+      if (!res.ok) {
+        // Surface the failure (not console.error) and revert to the server-persisted order.
+        toast("Failed to save connection order", "error");
+        setOrderOverride(null);
+      }
+      // Success: the optimistic order is already shown; skipping router.refresh() avoids flicker.
+    } catch {
       toast("Failed to save connection order", "error");
-      router.refresh();
-      return;
+      setOrderOverride(null);
     }
-    // Success: the optimistic order is already shown. Skipping router.refresh() avoids the
-    // reorder flicker (a full reload would briefly repaint the pre-reorder order).
   }
 
   return (
