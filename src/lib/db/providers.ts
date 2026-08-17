@@ -1,6 +1,7 @@
 // src/lib/db/providers.ts
 import { getDb } from "./bootstrap.ts";
 import { seedDefaultModels } from "./models.ts";
+import { CATALOG_PROVIDERS } from "../catalog/providers.ts";
 import type { Provider, ProviderKind, WireFormat } from "./types.ts";
 
 interface ProviderRow {
@@ -11,6 +12,8 @@ interface ProviderRow {
   wire_format: string;
   enabled: number;
   model_prefix: string;
+  oauth_provider: string | null;
+  provider_specific_data: string | null;
 }
 
 function toProvider(row: ProviderRow): Provider {
@@ -22,6 +25,8 @@ function toProvider(row: ProviderRow): Provider {
     wireFormat: row.wire_format as WireFormat,
     enabled: row.enabled !== 0,
     modelPrefix: row.model_prefix ?? "",
+    oauthProvider: row.oauth_provider ?? null,
+    providerSpecificData: row.provider_specific_data ?? null,
   };
 }
 
@@ -57,7 +62,14 @@ export function getProviderByPrefix(prefix: string): Provider | null {
 }
 
 export function deleteProvider(id: string): void {
-  getDb().prepare("DELETE FROM providers WHERE id = ?").run(id);
+  const db = getDb();
+  const tx = db.transaction(() => {
+    db.prepare("DELETE FROM providers WHERE id = ?").run(id);
+    // Record the deletion so seedCatalogProviders() (which runs on every boot, not
+    // just the first) never resurrects it — see migration 012.
+    db.prepare("INSERT OR IGNORE INTO deleted_catalog_provider_ids (provider_id) VALUES (?)").run(id);
+  });
+  tx();
 }
 
 export function upsertProvider(p: Provider): void {
@@ -71,17 +83,29 @@ export function upsertProvider(p: Provider): void {
   try {
     getDb()
       .prepare(
-        `INSERT INTO providers (id, name, kind, base_url, wire_format, enabled, model_prefix)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET
-           name = excluded.name,
-           kind = excluded.kind,
-           base_url = excluded.base_url,
-           wire_format = excluded.wire_format,
-           enabled = excluded.enabled,
-           model_prefix = excluded.model_prefix`
+        `INSERT INTO providers (id, name, kind, base_url, wire_format, enabled, model_prefix, oauth_provider, provider_specific_data)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name,
+            kind = excluded.kind,
+            base_url = excluded.base_url,
+            wire_format = excluded.wire_format,
+            enabled = excluded.enabled,
+            model_prefix = excluded.model_prefix,
+            oauth_provider = excluded.oauth_provider,
+            provider_specific_data = excluded.provider_specific_data`
       )
-      .run(p.id, p.name, p.kind, p.baseUrl, p.wireFormat, p.enabled ? 1 : 0, p.modelPrefix ?? "");
+      .run(
+        p.id,
+        p.name,
+        p.kind,
+        p.baseUrl,
+        p.wireFormat,
+        p.enabled ? 1 : 0,
+        p.modelPrefix ?? "",
+        p.oauthProvider ?? null,
+        p.providerSpecificData ?? null
+      );
   } catch (e) {
     // Backstop for the prefixOwner() check above: that check-then-insert is not atomic,
     // so a concurrent writer can still race past it. The unique index (migration 006) is
@@ -91,9 +115,61 @@ export function upsertProvider(p: Provider): void {
     }
     throw e;
   }
+  // Explicitly re-adding a provider (e.g. re-picking it from the catalog grid after a
+  // prior delete) un-blocks future catalog reseeds for this id too.
+  getDb().prepare("DELETE FROM deleted_catalog_provider_ids WHERE provider_id = ?").run(p.id);
   // Keep legacy convenience: a freshly added default provider (openai/anthropic/google)
   // automatically gets its well-known models, just like the old static MODEL_MAP. Only
   // on creation — an edit to an existing provider (e.g. changing its prefix) shouldn't
   // re-run the full default-seed scan on every save.
   if (isNew) seedDefaultModels();
+}
+
+/**
+ * Seed the curated provider catalog into the `providers` table. Runs on every boot
+ * (not just the first), so two guards keep it idempotent in both directions:
+ * INSERT OR IGNORE means operator-created/edited rows are never overwritten
+ * (mirrors seedDefaultModels()'s idempotency), and skipping ids recorded in
+ * `deleted_catalog_provider_ids` means a provider the operator explicitly deleted
+ * stays deleted instead of resurrecting on the next restart (migration 012).
+ * Only shippable catalog entries (those with a concrete wireFormat) are seeded —
+ * deferred OAuth providers are documented but intentionally not created as dead rows.
+ */
+export function seedCatalogProviders(): void {
+  const db = getDb();
+  const deletedIds = new Set(
+    db
+      .prepare("SELECT provider_id FROM deleted_catalog_provider_ids")
+      .all()
+      .map((r) => (r as { provider_id: string }).provider_id)
+  );
+  const insert = db.prepare(
+    `INSERT OR IGNORE INTO providers
+        (id, name, kind, base_url, wire_format, enabled, model_prefix, oauth_provider, provider_specific_data)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+  const tx = getDb().transaction(() => {
+    for (const c of CATALOG_PROVIDERS) {
+      if (!c.wireFormat) continue; // deferred — skip
+      if (deletedIds.has(c.id)) continue; // operator explicitly removed it — stay removed
+      insert.run(
+        c.id,
+        c.name,
+        c.kind,
+        c.baseUrl,
+        c.wireFormat,
+        1,
+        c.modelPrefix ?? "",
+        c.oauthProvider ?? null,
+        c.providerSpecificDefaults ? JSON.stringify(c.providerSpecificDefaults) : null
+      );
+    }
+    // The well-known providers (openai/anthropic/google) are now pre-seeded above,
+    // so a later `upsertProvider({id:"openai"})` sees isNew === false and skips its
+    // own seedDefaultModels() call. Seed their legacy default models here so the
+    // catalog is immediately usable and tests that upsert a default provider still
+    // get their models. Idempotent (INSERT OR IGNORE, provider-existence gated).
+    seedDefaultModels();
+  });
+  tx();
 }

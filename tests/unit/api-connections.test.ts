@@ -36,6 +36,68 @@ upsertProvider({
   enabled: true,
 });
 
+upsertProvider({
+  id: "test-prov-1",
+  name: "Test Provider 1",
+  kind: "apikey",
+  baseUrl: "https://api.test-provider-1.com/v1",
+  wireFormat: "openai",
+  enabled: true,
+});
+
+test("POST /api/connections with an unknown provider is 400", async () => {
+  const res = await connections.POST(
+    new Request("https://x/api/connections", {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({
+        providerId: "does-not-exist",
+        label: "primary",
+        apiKey: "sk-test",
+      }),
+    })
+  );
+  assert.equal(res.status, 400);
+  assert.equal(listConnections("does-not-exist").length, 0);
+});
+
+test("POST /api/connections with a priority stores it", async () => {
+  const res = await connections.POST(
+    new Request("https://x/api/connections", {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({
+        providerId: "test-prov-1",
+        label: "primary",
+        apiKey: "sk-test",
+        priority: 7,
+      }),
+    })
+  );
+  assert.equal(res.status, 200);
+  const [conn] = listConnections("test-prov-1");
+  assert.equal(conn.priority, 7);
+});
+
+test("POST /api/connections without priority defaults to 100", async () => {
+  const res = await connections.POST(
+    new Request("https://x/api/connections", {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({
+        providerId: "test-prov-1",
+        label: "secondary",
+        apiKey: "sk-test",
+      }),
+    })
+  );
+  assert.equal(res.status, 200);
+  const conns = listConnections("test-prov-1");
+  assert.ok(conns.length >= 2);
+  const secondary = conns.find((c) => c.label === "secondary");
+  assert.equal(secondary?.priority, 100);
+});
+
 test("POST /api/connections without a session is 401", async () => {
   const res = await connections.POST(
     new Request("https://x/api/connections", { method: "POST", body: "{}" })

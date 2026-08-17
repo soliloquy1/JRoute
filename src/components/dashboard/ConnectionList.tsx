@@ -1,8 +1,7 @@
 // src/components/dashboard/ConnectionList.tsx
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useMemo } from "react";
 import {
   DndContext,
   closestCenter,
@@ -20,31 +19,50 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import type { Connection } from "@/lib/db/types.ts";
 import { ConnectionRow } from "./ConnectionRow.tsx";
+import { useToast } from "./ui.tsx";
+
+export interface ConnectionQuotaInfo {
+  requests: number;
+  requestLimit: number | null;
+  tokens: number;
+  tokenLimit: number | null;
+  overQuota: boolean;
+}
 
 export interface ConnectionListItem {
   connection: Connection;
   healthy: boolean;
+  quota?: ConnectionQuotaInfo;
 }
 
-function SortableRow({ connection, healthy }: ConnectionListItem) {
+function SortableRow({ connection, healthy, quota }: ConnectionListItem) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
     id: connection.id,
   });
   const style = { transform: CSS.Transform.toString(transform), transition };
   return (
     <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
-      <ConnectionRow connection={connection} healthy={healthy} />
+      <ConnectionRow connection={connection} healthy={healthy} quota={quota} />
     </div>
   );
 }
 
 export function ConnectionList({ items: initialItems }: { items: ConnectionListItem[] }) {
-  const router = useRouter();
-  const [items, setItems] = useState(initialItems);
+  const { toast } = useToast();
+  // Keep only an ORDER override in state. Rendered items are derived from the latest server
+  // props (so health/label/decrypt updates flow through on refresh) reordered by the saved
+  // order. This kills both the reorder flicker (no router.refresh() on success) and the
+  // content-staleness regression (items are never a frozen local copy).
+  const [orderOverride, setOrderOverride] = useState<number[] | null>(null);
 
-  useEffect(() => {
-    setItems(initialItems);
-  }, [initialItems]);
+  const items = useMemo(() => {
+    if (!orderOverride) return initialItems;
+    const byId = new Map(initialItems.map((i) => [i.connection.id, i]));
+    if (orderOverride.length === initialItems.length && orderOverride.every((id) => byId.has(id))) {
+      return orderOverride.map((id) => byId.get(id)!);
+    }
+    return initialItems;
+  }, [initialItems, orderOverride]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
@@ -54,17 +72,23 @@ export function ConnectionList({ items: initialItems }: { items: ConnectionListI
     const oldIndex = items.findIndex((item) => item.connection.id === active.id);
     const newIndex = items.findIndex((item) => item.connection.id === over.id);
     const reordered = arrayMove(items, oldIndex, newIndex);
-    setItems(reordered);
-    const res = await fetch("/api/connections/reorder", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ orderedIds: reordered.map((item) => item.connection.id) }),
-    });
-    if (!res.ok) {
-      console.error("Failed to persist connection reorder");
-      return;
+    setOrderOverride(reordered.map((item) => item.connection.id));
+    try {
+      const res = await fetch("/api/connections/reorder", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ orderedIds: reordered.map((item) => item.connection.id) }),
+      });
+      if (!res.ok) {
+        // Surface the failure (not console.error) and revert to the server-persisted order.
+        toast("Failed to save connection order", "error");
+        setOrderOverride(null);
+      }
+      // Success: the optimistic order is already shown; skipping router.refresh() avoids flicker.
+    } catch {
+      toast("Failed to save connection order", "error");
+      setOrderOverride(null);
     }
-    router.refresh();
   }
 
   return (
@@ -79,6 +103,7 @@ export function ConnectionList({ items: initialItems }: { items: ConnectionListI
               key={item.connection.id}
               connection={item.connection}
               healthy={item.healthy}
+              quota={item.quota}
             />
           ))}
         </div>

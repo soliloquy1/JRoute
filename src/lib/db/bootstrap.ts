@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 import { runMigrations } from "./migrationRunner.ts";
 import { seedDefaultModels } from "./models.ts";
+import { seedCatalogProviders } from "./providers.ts";
 import type { SqliteAdapter } from "./adapters/types.ts";
 
 const require = createRequire(import.meta.url);
@@ -53,6 +54,7 @@ export function getDb(): SqliteAdapter {
   runMigrations(db, { isNewDb });
   instance = db;
   seedDefaultModels();
+  seedCatalogProviders();
   return instance;
 }
 

@@ -16,6 +16,10 @@ export interface Provider {
    *  `modelPrefix/nativeId` (e.g. `or/gpt-5.6-sol`) and routes only to this provider.
    *  Empty string means the provider serves bare (unprefixed) model ids. */
   modelPrefix?: string;
+  /** OAuth provider key (e.g. "claude", "xai-oauth") when kind === "oauth". Null for API-key providers. */
+  oauthProvider?: string | null;
+  /** Free-form JSON bag for provider-specific configuration (scopes, tenant, region, …). */
+  providerSpecificData?: string | null;
 }
 
 export interface Connection {
@@ -36,6 +40,10 @@ export interface Connection {
    */
   credentialDecryptFailed: boolean;
   enabled: boolean;
+  /** Free-form JSON bag for connection-specific configuration (per-connection OAuth state, etc.). */
+  providerSpecificData?: string | null;
+  /** Quota-window threshold config (JSON): { requests?: number; tokens?: number; windowMs?: number }. */
+  quotaWindowThresholds?: string | null;
 }
 
 export type LorebookScope = "character" | "global";

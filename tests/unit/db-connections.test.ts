@@ -21,6 +21,7 @@ const {
   updateConnection,
   deleteConnection,
   getConnectionByProviderAndLabel,
+  countProvidersWithConnections,
 } = await import("../../src/lib/db/connections.ts");
 
 after(() => {
@@ -150,4 +151,25 @@ test("getConnectionByProviderAndLabel finds an existing connection", () => {
 
 test("getConnectionByProviderAndLabel returns null when no match", () => {
   assert.equal(getConnectionByProviderAndLabel("openai", "nope"), null);
+});
+
+test("countProvidersWithConnections is 0 when providers exist but none have a connection", () => {
+  assert.equal(countProvidersWithConnections(), 0);
+});
+
+test("countProvidersWithConnections counts distinct providers, not connections", () => {
+  createConnection("openai", "a", "k1");
+  createConnection("openai", "b", "k2");
+  assert.equal(countProvidersWithConnections(), 1, "two connections on one provider still count as 1");
+
+  upsertProvider({
+    id: "anthropic",
+    name: "Anthropic",
+    kind: "apikey",
+    baseUrl: "https://api.anthropic.com/v1",
+    wireFormat: "anthropic",
+    enabled: true,
+  });
+  createConnection("anthropic", "c", "k3");
+  assert.equal(countProvidersWithConnections(), 2);
 });

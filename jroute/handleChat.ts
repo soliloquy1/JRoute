@@ -3,7 +3,13 @@ import { z } from "zod";
 import { jsonError } from "./errors.ts";
 import { listConnections, markCooldown, clearCooldown } from "../src/lib/db/connections.ts";
 import { logUsage } from "../src/lib/db/usageLogs.ts";
-import { eligibleConnections } from "./selectConnection.ts";
+import { recordUsage, parseQuotaThresholds, isOverQuota } from "../src/lib/db/quotaWindows.ts";
+import { getOAuthToken, isTokenValid } from "../src/lib/db/oauthTokens.ts";
+import { oauthTokenKey } from "../src/lib/oauth/tokenKey.ts";
+import { refreshOAuthToken } from "../src/lib/oauth/refresh.ts";
+import { eligibleConnections, applyFallbackStrategy } from "./selectConnection.ts";
+import { getFallbackStrategy } from "../src/lib/db/settings.ts";
+import { getLastConnectionId, setLastConnectionId } from "../src/lib/db/providerRoutingState.ts";
 import { execute, cooldownMsFor } from "./executor.ts";
 import { keepaliveStream, sseHeaders } from "./sse.ts";
 import { resolveModel } from "./resolveModel.ts";
@@ -170,6 +176,15 @@ export async function handleChat(
   }
   const provider = resolved.provider;
   const providerId = provider.id;
+  // Phase 2: for OAuth providers, resolve the bearer from the persisted `oauth_tokens`
+  // (encrypted) rather than `connection.apiKey`. Injected into the executor so its
+  // `execute(params, fetchImpl)` signature stays testable. Returns null when no valid
+  // token is stored, falling back to the connection's apiKey (or a 401 upstream).
+  const tokenResolver = (connectionId: number): string | null => {
+    if (provider.kind !== "oauth") return null;
+    const t = getOAuthToken(oauthTokenKey(provider), connectionId);
+    return isTokenValid(t) ? (t.accessToken as string) : null;
+  };
   // The client may send a prefixed id (`or/gpt-5.6-sol`); the upstream must receive
   // the native id (`gpt-5.6-sol`). `requestedModel` is preserved for logging only.
   const upstreamModel = resolved.nativeModel;
@@ -213,7 +228,13 @@ export async function handleChat(
     return jsonError(503, `No converter for wire format: ${provider.wireFormat}`);
   }
 
-  const candidates = eligibleConnections(listConnections(providerId), Date.now());
+  const fallbackStrategy = getFallbackStrategy();
+  const candidates = applyFallbackStrategy(
+    eligibleConnections(listConnections(providerId), Date.now(), isOverQuota),
+    fallbackStrategy,
+    providerId,
+    getLastConnectionId
+  );
   debugLog("connections.eligible", {
     requestId,
     providerId,
@@ -246,9 +267,18 @@ export async function handleChat(
   let lastMessage: string | null = null;
   let lastConnectionId: number | null = null;
   let skippedDecryptFailed = false;
+  // Phase 2: at most one refresh-then-retry per connection per request — prevents an
+  // upstream that keeps returning 401 even with a fresh token from looping forever.
+  const oauthRefreshedConnectionIds = new Set<number>();
 
   for (let attempt = 0; attempt < candidates.length; attempt += 1) {
     const connection = candidates[attempt];
+
+    // The connection's configured quota window length (Phase 2 fix): recordUsage must
+    // bucket into the SAME windowMs that isOverQuota reads, or a non-60s threshold never
+    // trips. Falls back to the 60s default when unset/garbage.
+    const windowMs =
+      parseQuotaThresholds(connection.quotaWindowThresholds).windowMs ?? 60_000;
 
     // Operator addition B: skip connections whose credential could not be decrypted.
     // This is a config problem (rotated/lost STORAGE_ENCRYPTION_KEY), not a connection
@@ -259,6 +289,19 @@ export async function handleChat(
       skippedDecryptFailed = true;
       debugLog("connection.skipped_decrypt_failed", { requestId, connectionId: connection.id });
       continue;
+    }
+
+    // Same skip, for the oauth_tokens ciphertext (bug #6148 class): without this, a
+    // decrypt-failed token silently resolves to null in tokenResolver and the executor
+    // fires with an empty bearer — a blind 401 that looks like a real auth failure
+    // instead of the operator-fixable "STORAGE_ENCRYPTION_KEY changed" cause.
+    if (provider.kind === "oauth") {
+      const tokenRow = getOAuthToken(oauthTokenKey(provider), connection.id);
+      if (tokenRow?.credentialDecryptFailed) {
+        skippedDecryptFailed = true;
+        debugLog("connection.skipped_oauth_decrypt_failed", { requestId, connectionId: connection.id });
+        continue;
+      }
     }
 
     debugLog("upstream.attempt", {
@@ -281,9 +324,21 @@ export async function handleChat(
         // there), so `upstreamBody.stream` is always undefined and the streaming URL would
         // never be selected. `body` here is the parsed pre-conversion client request.
         stream: body.stream === true,
+        tokenResolver,
       },
       fetchImpl
     );
+
+    // Phase 3/4: attribute this upstream attempt to the connection's rolling quota
+    // window (1 request per dial; tokens are added once known below). Failed attempts
+    // (e.g. 429) also consume the provider's limit, so they count too. Wrapped in
+    // try/catch: with foreign_keys=ON a stale/ghost connection id can throw inside the
+    // stream-completion callback, and a throw here must not abort the failover loop.
+    try {
+      recordUsage(connection.id, 1, 0, Date.now(), windowMs);
+    } catch (err) {
+      debugLogError("quota.record_failed", { connectionId: connection.id, error: String(err) });
+    }
 
     debugLog("upstream.result", {
       requestId,
@@ -309,6 +364,11 @@ export async function handleChat(
 
     if (result.ok) {
       clearCooldown(connection.id);
+      // Phase 4: only the round-robin strategy consults this cursor (selectConnection.ts's
+      // applyFallbackStrategy), so only bother writing it under that strategy.
+      if (fallbackStrategy === "round-robin") {
+        setLastConnectionId(providerId, connection.id);
+      }
 
       if (result.stream) {
         const streamConverter = getStreamConverter(provider.wireFormat);
@@ -357,6 +417,18 @@ export async function handleChat(
             promptTokens: completion.promptTokens,
             outputTokens: completion.outputTokens,
           });
+          // Phase 3/4: fold the realized token usage into the rolling quota window.
+          try {
+            recordUsage(
+              connection.id,
+              0,
+              (completion.promptTokens ?? 0) + (completion.outputTokens ?? 0),
+              Date.now(),
+              windowMs
+            );
+          } catch (err) {
+            debugLogError("quota.record_failed", { connectionId: connection.id, error: String(err) });
+          }
           logUsage({
             apiKeyId: key.id,
             providerId,
@@ -383,6 +455,18 @@ export async function handleChat(
         ? responseConverter.convertResponse(result.json, requestedModel)
         : result.json;
       const usage = (outJson as { usage?: UpstreamUsage } | null)?.usage;
+      // Phase 3/4: fold the token usage into the rolling quota window now that we know it.
+      try {
+        recordUsage(
+          connection.id,
+          0,
+          (usage?.prompt_tokens ?? 0) + (usage?.completion_tokens ?? 0),
+          Date.now(),
+          windowMs
+        );
+      } catch (err) {
+        debugLogError("quota.record_failed", { connectionId: connection.id, error: String(err) });
+      }
       debugLog("response.success", {
         requestId,
         connectionId: connection.id,
@@ -405,6 +489,36 @@ export async function handleChat(
         status: 200,
         headers: { "content-type": "application/json" },
       });
+    }
+
+    // Phase 2: an oauth connection's 401 usually means the access token expired
+    // between our (skew-tolerant) validity check and the actual dial. Refresh once and
+    // retry the SAME connection before falling over to the next candidate — 429 is
+    // unaffected and keeps using the existing markCooldown path below.
+    if (result.status === 401 && provider.kind === "oauth") {
+      if (!oauthRefreshedConnectionIds.has(connection.id)) {
+        oauthRefreshedConnectionIds.add(connection.id);
+        const refreshed = await refreshOAuthToken(provider, connection.id);
+        if (refreshed) {
+          debugLog("oauth.token_refreshed_retry", { requestId, connectionId: connection.id });
+          attempt -= 1;
+          continue;
+        }
+        debugLog("oauth.refresh_failed", { requestId, connectionId: connection.id });
+      }
+      // Refresh was already attempted (or just failed): this connection's credential
+      // is bad, but sibling connections for the same provider may still work — fail
+      // over instead of the generic "break on non-retryable status" path below, since
+      // a bare 401 is not in the executor's RETRYABLE set.
+      lastStatus = result.status || 502;
+      lastMessage = result.errorMessage ?? "Upstream error";
+      lastConnectionId = connection.id;
+      markCooldown(
+        connection.id,
+        Date.now() + cooldownMsFor(result.status, attempt, result.retryAfterMs),
+        lastMessage
+      );
+      continue;
     }
 
     lastStatus = result.status || 502;
