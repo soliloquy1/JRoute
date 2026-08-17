@@ -1,7 +1,8 @@
 // src/lib/prompts/regexApply.ts
+import isSafeRegex from "safe-regex";
 import { substituteMacros } from "./macros.ts";
 import { compileFindRegex } from "./regexScriptSchema.ts";
-import { debugLogError } from "../debugLog/logger.ts";
+import { debugLog, debugLogError } from "../debugLog/logger.ts";
 import type { MacroContext } from "./macros.ts";
 import type { RegexScript } from "./regexScriptSchema.ts";
 
@@ -55,6 +56,18 @@ export function applyRegexScript(
   try {
     const pattern = macroSubstitutedFindRegex(script, ctx);
     const compiled = compileFindRegex(pattern);
+    // Write-time validation (src/lib/db/regexPresets.ts) only ever sees the RAW findRegex
+    // — for substituteRegex 1/2, the pattern actually compiled here differs (macro values
+    // are spliced in), so a pattern that was safe on write can become catastrophic after
+    // substitution. Re-check post-substitution before ever running it against real
+    // request/response text; fail soft (skip this script) rather than hang the request.
+    if (script.substituteRegex !== 0 && !isSafeRegex(compiled.source)) {
+      debugLog("regex.unsafeAfterMacroSubstitution", {
+        scriptName: script.scriptName,
+        forPlacement,
+      });
+      return text;
+    }
     // Force the global flag: a saved /pattern/flags that omitted "g" would otherwise only
     // replace the first match, unlike ST's own "replace every occurrence" behavior.
     const globalRe = compiled.global ? compiled : new RegExp(compiled.source, `${compiled.flags}g`);

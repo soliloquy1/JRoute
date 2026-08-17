@@ -152,11 +152,17 @@ export function wrapWithRegexTransform(
               })()
             : tryAdvanceCommit(state, scripts, ctx);
 
-          const outParsed = {
-            ...parsed,
-            choices: [{ ...choice, delta: { ...delta, content: emitted } }],
-          };
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(outParsed)}\n\n`));
+          // Pure hold-back (nothing committed yet, no finish_reason on this frame): skip
+          // the frame entirely rather than sending a content:"" chunk the upstream never
+          // produced — the client ends up with exactly the deltas it would have gotten
+          // unwrapped, just batched differently.
+          if (emitted.length > 0 || choice.finish_reason != null) {
+            const outParsed = {
+              ...parsed,
+              choices: [{ ...choice, delta: { ...delta, content: emitted } }],
+            };
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(outParsed)}\n\n`));
+          }
 
           if (choice.finish_reason != null && !state.flushed) {
             const tail = flushRemainder(state, scripts, ctx);

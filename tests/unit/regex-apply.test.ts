@@ -78,6 +78,24 @@ test("applyRegexScript fails soft and returns the original text on a bad pattern
   assert.equal(applyRegexScript("hello", s, 2, CTX), "hello");
 });
 
+test("applyRegexScript fails soft when substituteRegex=1 turns a safe pattern catastrophic after macro substitution", () => {
+  // Write-time validation only sees the raw "{{char}}" placeholder — the actual compiled
+  // pattern after substitution is the classic nested-quantifier ReDoS shape (a+)+$. Must
+  // be caught at apply time too, not just executed against the real request/response
+  // text. Input is short and fully matching on purpose (fast either way — the exponential
+  // blowup this pattern is dangerous for only appears on long *non*-matching near-misses,
+  // which this test deliberately never constructs) so the pre-fix behavior fails cleanly
+  // and quickly instead of hanging: unguarded, (a+)+$ matches "aaaa" outright and replaces
+  // it with "X"; guarded, the unsafe pattern is skipped and the text passes through.
+  const s = script({
+    findRegex: "/({{char}}+)+$/",
+    replaceString: "X",
+    substituteRegex: 1,
+  });
+  const catastrophicCtx = { char: "a", user: "" };
+  assert.equal(applyRegexScript("aaaa", s, 2, catastrophicCtx), "aaaa");
+});
+
 test("applyRegexScripts applies scripts in array order", () => {
   const upper = script({ findRegex: "/a/", replaceString: "A" });
   const bang = script({ findRegex: "/A/", replaceString: "A!" });

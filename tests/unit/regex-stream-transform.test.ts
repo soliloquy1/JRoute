@@ -134,3 +134,24 @@ test("wrapWithRegexTransform: a byte-chunk boundary splitting a multi-byte UTF-8
   const deltas = await collectDeltas(out);
   assert.equal(deltas.join(""), "y🎉y");
 });
+
+test("wrapWithRegexTransform: a pure hold-back frame (nothing committed yet, no finish_reason) is not sent as an empty-content chunk", async () => {
+  const s = script({ findRegex: "/zzz/", replaceString: "q" }); // never matches "hi"
+  const input = byteStream([sseChunk("hi")]); // below the margin, stream just closes
+  const out = wrapWithRegexTransform(input, [s], CTX, "req6");
+  const reader = out.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+  }
+  const dataFrames = buffer
+    .split("\n\n")
+    .filter((block) => block.startsWith("data:") && block.slice(5).trim().length > 0);
+  // Exactly one frame: the flush-produced chunk carrying the buffered "hi". No separate
+  // content:"" chunk should have been sent while the text was still held back.
+  assert.equal(dataFrames.length, 1);
+  assert.match(dataFrames[0], /"content":"hi"/);
+});
