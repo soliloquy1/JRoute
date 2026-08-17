@@ -1,5 +1,7 @@
 import type { Connection } from "../src/lib/db/types.ts";
 import { isOverQuota } from "../src/lib/db/quotaWindows.ts";
+import type { FallbackStrategy } from "../src/lib/db/settings.ts";
+import { getLastConnectionId } from "../src/lib/db/providerRoutingState.ts";
 
 /**
  * Spec §5 step 9. Cooldowns are lazy: a `cooldownUntil` in the past makes the
@@ -15,4 +17,28 @@ export function eligibleConnections(all: Connection[], now: number): Connection[
     .filter((c) => c.enabled && (c.cooldownUntil === null || c.cooldownUntil <= now))
     .filter((c) => !isOverQuota(c, now))
     .sort((a, b) => a.priority - b.priority || a.id - b.id);
+}
+
+/**
+ * Phase 4 step 21: apply the operator's global fallback-strategy setting. `priority`
+ * (default) leaves the priority-then-id order from `eligibleConnections` untouched.
+ * `round-robin` rotates the list to start right after the last connection that was
+ * actually dialed for this provider (`provider_routing_state`), so consecutive
+ * requests spread across a provider's connections instead of always preferring the
+ * same lowest-priority one first — the rest of the list, used for in-request
+ * failover, keeps its relative priority order. No combo engine: this is a pure array
+ * rotation, not a scoring/weighting system.
+ */
+export function applyFallbackStrategy(
+  connections: Connection[],
+  strategy: FallbackStrategy,
+  providerId: string
+): Connection[] {
+  if (strategy !== "round-robin" || connections.length <= 1) return connections;
+  const lastId = getLastConnectionId(providerId);
+  if (lastId === null) return connections;
+  const lastIndex = connections.findIndex((c) => c.id === lastId);
+  if (lastIndex === -1) return connections;
+  const nextIndex = (lastIndex + 1) % connections.length;
+  return [...connections.slice(nextIndex), ...connections.slice(0, nextIndex)];
 }

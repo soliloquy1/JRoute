@@ -7,7 +7,9 @@ import { recordUsage, parseQuotaThresholds } from "../src/lib/db/quotaWindows.ts
 import { getOAuthToken, isTokenValid } from "../src/lib/db/oauthTokens.ts";
 import { oauthTokenKey } from "../src/lib/oauth/tokenKey.ts";
 import { refreshOAuthToken } from "../src/lib/oauth/refresh.ts";
-import { eligibleConnections } from "./selectConnection.ts";
+import { eligibleConnections, applyFallbackStrategy } from "./selectConnection.ts";
+import { getFallbackStrategy } from "../src/lib/db/settings.ts";
+import { setLastConnectionId } from "../src/lib/db/providerRoutingState.ts";
 import { execute, cooldownMsFor } from "./executor.ts";
 import { keepaliveStream, sseHeaders } from "./sse.ts";
 import { resolveModel } from "./resolveModel.ts";
@@ -226,7 +228,12 @@ export async function handleChat(
     return jsonError(503, `No converter for wire format: ${provider.wireFormat}`);
   }
 
-  const candidates = eligibleConnections(listConnections(providerId), Date.now());
+  const fallbackStrategy = getFallbackStrategy();
+  const candidates = applyFallbackStrategy(
+    eligibleConnections(listConnections(providerId), Date.now()),
+    fallbackStrategy,
+    providerId
+  );
   debugLog("connections.eligible", {
     requestId,
     providerId,
@@ -356,6 +363,11 @@ export async function handleChat(
 
     if (result.ok) {
       clearCooldown(connection.id);
+      // Phase 4: only the round-robin strategy consults this cursor (selectConnection.ts's
+      // applyFallbackStrategy), so only bother writing it under that strategy.
+      if (fallbackStrategy === "round-robin") {
+        setLastConnectionId(providerId, connection.id);
+      }
 
       if (result.stream) {
         const streamConverter = getStreamConverter(provider.wireFormat);

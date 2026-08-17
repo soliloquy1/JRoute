@@ -18,4 +18,5 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Logit Bias", href: "/logit-bias", icon: "filter_alt" },
   { label: "Prompts & Lorebooks", href: "/prompts", icon: "edit_note" },
   { label: "MCP Servers", href: "/mcp", icon: "dns" },
+  { label: "Settings", href: "/settings", icon: "settings" },
 ];
