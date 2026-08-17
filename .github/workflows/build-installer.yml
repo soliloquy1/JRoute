@@ -86,6 +86,13 @@ jobs:
           name: JRoute Installer ${{ github.event.inputs.release_tag || github.ref_name }}
           draft: true
           prerelease: true
+          # GitHub's GET /releases/latest endpoint (which the installer's
+          # resolveReleaseRef() calls to pick a default install ref) excludes prereleases
+          # by definition. Without this, every beta release would be permanently
+          # invisible to that endpoint and the installer's default "release" channel
+          # would silently fall back to cloning `main` HEAD instead of the pinned tag.
+          # make_latest overrides that exclusion regardless of the prerelease flag.
+          make_latest: true
           files: |
             artifacts/**/*.dmg
             artifacts/**/*.exe
