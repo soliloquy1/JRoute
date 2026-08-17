@@ -50,13 +50,18 @@ jobs:
       - name: Build installer (Electron)
         working-directory: installer
         # --publish=never keeps electron-builder from pushing anywhere; we attach in the release job.
+        #
+        # No CSC_LINK/CSC_KEY_PASSWORD/APPLE_* env here on purpose: signing is reserved but
+        # disabled for v0.2.0-beta (see the file header), and none of these repo secrets are
+        # configured yet. `${{ secrets.CSC_LINK }}` on an UNSET secret evaluates to an empty
+        # string, not "unset" — electron-builder's importCertificate() (app-builder-lib's
+        # codeSign/codesign.js) checks `cscLink != null` rather than truthiness, so an empty
+        # CSC_LINK still falls through to being treated as a certificate file path,
+        # path.resolve()s to the CWD itself, and throws "<installer dir> not a file" on
+        # macOS specifically (windows/linux don't hit this code path). Re-add these env
+        # lines once real signing secrets exist — a real value takes an earlier branch in
+        # that function and never reaches the empty-string fallthrough.
         run: npm run build -- --publish=never
-        env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
