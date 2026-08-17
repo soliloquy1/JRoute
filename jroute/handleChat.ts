@@ -492,7 +492,10 @@ export async function handleChat(
         stream: true,
         wireFormat: provider.wireFormat,
       });
-      return new Response(keepaliveStream(result.stream), {
+      const outStream = hasActiveScripts(regexScripts, 2)
+        ? wrapWithRegexTransform(result.stream, regexScripts, regexMacroCtx, requestId)
+        : result.stream;
+      return new Response(keepaliveStream(outStream), {
         status: 200,
         headers: sseHeaders(),
       });
@@ -540,13 +543,16 @@ export async function handleChat(
         error,
       });
     });
+    const outStream = hasActiveScripts(regexScripts, 2)
+      ? wrapWithRegexTransform(wrapped, regexScripts, regexMacroCtx, requestId)
+      : wrapped;
     debugLog("response.success", {
       requestId,
       connectionId,
       stream: true,
       wireFormat: provider.wireFormat,
     });
-    return new Response(keepaliveStream(wrapped), { status: 200, headers: sseHeaders() });
+    return new Response(keepaliveStream(outStream), { status: 200, headers: sseHeaders() });
   }
 
   const responseConverter = getResponseConverter(provider.wireFormat);

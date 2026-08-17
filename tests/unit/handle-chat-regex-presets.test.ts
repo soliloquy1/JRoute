@@ -142,3 +142,104 @@ test("handleChat applies a regex preset to the assistant message content for a n
   const body = (await res.json()) as { choices: Array<{ message: { content: string } }> };
   assert.equal(body.choices[0].message.content, "HI there");
 });
+
+function sseBytes(frames: string[]): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  let i = 0;
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (i >= frames.length) {
+        controller.close();
+        return;
+      }
+      controller.enqueue(encoder.encode(frames[i]));
+      i += 1;
+    },
+  });
+}
+
+function openaiChunk(content: string, finish: string | null = null): string {
+  const payload = {
+    id: "c",
+    object: "chat.completion.chunk",
+    created: 1,
+    model: "gpt-4o",
+    choices: [{ index: 0, delta: content ? { content } : {}, finish_reason: finish }],
+  };
+  return `data: ${JSON.stringify(payload)}\n\n`;
+}
+
+test("handleChat applies a regex preset to a streaming openai-wireFormat response", async () => {
+  createConnection("openai", "primary", "sk-test");
+  const presetId = createRegexPreset("Redact", [
+    s({ scriptName: "s", findRegex: "/secret/", replaceString: "[redacted]", placement: [2] }),
+  ]);
+  const issued = issueApiKey("janitor-stream-openai");
+  setApiKeyRegexPreset(issued.id, presetId);
+  const apiKey = verifyApiKey(issued.secret);
+  const fetchImpl: typeof fetch = async () =>
+    new Response(sseBytes([openaiChunk("the secret"), openaiChunk("", "stop"), "data: [DONE]\n\n"]), {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    });
+  const res = await handleChat(
+    post({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }], stream: true }),
+    apiKey!,
+    { fetchImpl }
+  );
+  const text = await res.text();
+  assert.match(text, /\[redacted\]/);
+});
+
+test("handleChat applies a regex preset to a streaming anthropic-wireFormat response", async () => {
+  createConnection("anthropic", "primary", "sk-test");
+  const presetId = createRegexPreset("Redact2", [
+    s({ scriptName: "s", findRegex: "/secret/", replaceString: "[redacted]", placement: [2] }),
+  ]);
+  const issued = issueApiKey("janitor-stream-anthropic");
+  setApiKeyRegexPreset(issued.id, presetId);
+  const apiKey = verifyApiKey(issued.secret);
+  const frames = [
+    `event: message_start\ndata: ${JSON.stringify({
+      type: "message_start",
+      message: { id: "m1", usage: {} },
+    })}\n\n`,
+    `event: content_block_delta\ndata: ${JSON.stringify({
+      type: "content_block_delta",
+      delta: { type: "text_delta", text: "the secret" },
+    })}\n\n`,
+    `event: message_delta\ndata: ${JSON.stringify({
+      type: "message_delta",
+      delta: { stop_reason: "end_turn" },
+      usage: { output_tokens: 2 },
+    })}\n\n`,
+    `event: message_stop\ndata: ${JSON.stringify({ type: "message_stop" })}\n\n`,
+  ];
+  const fetchImpl: typeof fetch = async () =>
+    new Response(sseBytes(frames), { status: 200, headers: { "content-type": "text/event-stream" } });
+  const res = await handleChat(
+    post({ model: "claude-sonnet-4-6", messages: [{ role: "user", content: "hi" }], stream: true }),
+    apiKey!,
+    { fetchImpl }
+  );
+  const text = await res.text();
+  assert.match(text, /\[redacted\]/);
+});
+
+test("handleChat does not wrap the stream when the key has no active output scripts", async () => {
+  createConnection("openai", "primary", "sk-test");
+  const issued = issueApiKey("janitor-no-wrap");
+  const apiKey = verifyApiKey(issued.secret);
+  const fetchImpl: typeof fetch = async () =>
+    new Response(sseBytes([openaiChunk("hi"), openaiChunk("", "stop"), "data: [DONE]\n\n"]), {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    });
+  const res = await handleChat(
+    post({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }], stream: true }),
+    apiKey!,
+    { fetchImpl }
+  );
+  const text = await res.text();
+  assert.match(text, /"content":"hi"/);
+});
