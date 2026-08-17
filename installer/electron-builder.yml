@@ -13,6 +13,15 @@ files:
   - build/**/*
   - package.json
 
+# `files:` gets packed into app.asar by default — fine for everything the renderer/main
+# process load via require()/loadFile(), but useless for anything an OUTSIDE process needs
+# to read as a plain file on disk (a Linux .desktop entry's Icon= field, a Windows .lnk's
+# IconLocation). extraResources copies icon.png to resourcesPath, unpacked, specifically
+# for that — see shortcuts.js's createShortcut().
+extraResources:
+  - from: build/icon.png
+    to: icon.png
+
 # Signing is reserved but disabled for v0.2.0-beta. Wire these CI secrets later:
 #   CSC_LINK / CSC_KEY_PASSWORD  (macOS/Windows Authenticode)
 #   APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID (notarization)

@@ -4,7 +4,7 @@
 // process manager (a single JRouteManager instance for the installed server). JRoute
 // itself runs as an external child process under the downloaded Node — never inside
 // Electron — so better-sqlite3's native ABI never touches Electron's runtime.
-import { app, BrowserWindow, Tray, Menu, ipcMain, shell } from "electron";
+import { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage } from "electron";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
@@ -231,6 +231,16 @@ function createTray() {
 // ---- lifecycle ----
 
 app.whenReady().then(() => {
+  // macOS's Dock icon during an unpackaged `electron .` dev run does NOT follow
+  // BrowserWindow's `icon` option (that only affects Windows/Linux) — it shows
+  // Electron's own generic icon unless set explicitly here. Packaged builds don't need
+  // this: electron-builder bakes installer/build/icon.png into the app bundle itself.
+  // `app.dock` is undefined on Windows/Linux. `setIcon` takes a NativeImage, not a bare
+  // path string — passing a string silently no-ops rather than throwing.
+  if (process.platform === "darwin" && app.dock) {
+    const dockIcon = nativeImage.createFromPath(join(__dirname, "..", "build", "icon.png"));
+    if (!dockIcon.isEmpty()) app.dock.setIcon(dockIcon);
+  }
   const cfg = loadConfig(installDir);
   if (cfg) manager = createManager(cfg, managerOnLog);
   registerIpc();
