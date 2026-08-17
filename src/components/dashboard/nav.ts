@@ -12,6 +12,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Overview", href: "/", icon: "home" },
   { label: "Providers", href: "/providers", icon: "cable" },
   { label: "Models", href: "/models", icon: "model_training" },
+  { label: "Analytics", href: "/analytics", icon: "monitoring" },
   { label: "API Keys", href: "/keys", icon: "key" },
   { label: "Presets", href: "/rich-presets", icon: "tune" },
   { label: "Logit Bias", href: "/logit-bias", icon: "filter_alt" },

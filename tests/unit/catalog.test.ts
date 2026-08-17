@@ -20,7 +20,7 @@ const { CATALOG_PROVIDERS, DEFERRED_OAUTH_PROVIDERS } = await import(
 const { WIRE_DESCRIPTORS } = await import("../../jroute/executor.ts");
 const { logUsage } = await import("../../src/lib/db/usageLogs.ts");
 const { recordUsage } = await import("../../src/lib/db/quotaWindows.ts");
-const { getUsageByProvider, getCostOverTime, getProviderQuotaStatus } = await import(
+const { getProviderUsageTotals, getCostOverTime, getProviderQuotaStatus } = await import(
   "../../src/lib/db/analytics.ts"
 );
 
@@ -149,13 +149,13 @@ function insertUsage(opts: {
     );
 }
 
-test("getUsageByProvider aggregates requests, errors, tokens and cost", () => {
+test("getProviderUsageTotals aggregates requests, errors, tokens and cost", () => {
   insertUsage({ providerId: "openai", connectionId: 1, prompt: 10, output: 5, costUs: 0.02 });
   insertUsage({ providerId: "openai", connectionId: 1, prompt: 20, output: 10, costUs: 0.04 });
   insertUsage({ providerId: "openai", connectionId: 1, error: "boom" });
   insertUsage({ providerId: "anthropic", connectionId: 2, prompt: 1, output: 1, costUs: 0.01 });
 
-  const rows = getUsageByProvider(Date.now() - 60_000);
+  const rows = getProviderUsageTotals(Date.now() - 60_000);
   const byId = new Map(rows.map((r) => [r.providerId, r]));
 
   const oai = byId.get("openai")!;
@@ -170,10 +170,10 @@ test("getUsageByProvider aggregates requests, errors, tokens and cost", () => {
   assert.equal(ant.costUs, 0.01);
 });
 
-test("getUsageByProvider excludes rows older than sinceMs", () => {
+test("getProviderUsageTotals excludes rows older than sinceMs", () => {
   insertUsage({ providerId: "openai", connectionId: 1, ageMs: 0 });
   insertUsage({ providerId: "openai", connectionId: 1, ageMs: 10 * 24 * 60 * 60 * 1000 });
-  const recent = getUsageByProvider(Date.now() - 60_000);
+  const recent = getProviderUsageTotals(Date.now() - 60_000);
   assert.equal(recent.find((r) => r.providerId === "openai")?.requests, 1);
 });
 
@@ -222,7 +222,7 @@ test("analytics aggregation uses logUsage shape end-to-end", () => {
     toolRounds: 0,
     error: null,
   });
-  const rows = getUsageByProvider(Date.now() - 60_000);
+  const rows = getProviderUsageTotals(Date.now() - 60_000);
   const oai = rows.find((r) => r.providerId === "openai");
   assert.ok(oai);
   assert.equal(oai.requests, 1);

@@ -31,8 +31,15 @@ export interface ConnectionQuotaStatus {
   overQuota: boolean;
 }
 
-/** Aggregate request/error/token/cost counts per provider since `sinceMs`. */
-export function getUsageByProvider(sinceMs: number): ProviderUsageRow[] {
+/**
+ * Aggregate request/error/token/cost counts per provider since `sinceMs`.
+ *
+ * Named distinctly from `usageLogs.ts`'s `getUsageByProvider` (a same-name, different
+ * shape function: per-provider raw log ROWS, not aggregated totals) — the collision
+ * meant importing both together silently shadowed one or the other. Plan Phase 3 calls
+ * this out; this one owns the "totals" name since it's the newer of the two.
+ */
+export function getProviderUsageTotals(sinceMs: number): ProviderUsageRow[] {
   const rows = getDb()
     .prepare(
       `SELECT
