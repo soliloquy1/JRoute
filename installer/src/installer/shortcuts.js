@@ -4,11 +4,24 @@
 // Implemented cross-platform where trivial; macOS relies on the .dmg placing the app in
 // /Applications for the "Dock entry", so we only manage auto-start there.
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { existsSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { app } from "electron";
 
 const AUTO_START_ID = "org.jroute.installer";
+const __dirname = fileURLToPath(new URL(".", import.meta.url));
+
+// Packaged builds ship a real, unpacked icon.png at resourcesPath via electron-builder's
+// extraResources (app.asar itself isn't readable as a plain file by outside processes
+// like a Linux desktop-icon resolver). Dev/unpackaged runs fall back to the repo's own
+// build/icon.png directly. Only meaningful on Linux (Windows points IconLocation at the
+// .exe itself instead; macOS has no shortcut concept here at all — see createShortcut).
+function resolveIconPath() {
+  if (app.isPackaged) return join(process.resourcesPath, "icon.png");
+  return join(__dirname, "..", "..", "build", "icon.png");
+}
 
 function startupFolder() {
   if (process.platform === "win32") {
@@ -106,21 +119,32 @@ export function createShortcut({ appPath, label = "JRoute" }) {
   if (process.platform === "win32") {
     const desktop = join(homedir(), "Desktop");
     mkdirSync(desktop, { recursive: true });
-    writeFileSync(
-      join(desktop, `${label}.bat`),
-      `@echo off\r\nstart "" "${appPath}"\r\n`,
-      "utf8"
-    );
+    // A real .lnk, not a .bat — a batch file has no icon slot at all, so the desktop
+    // entry always showed Windows' generic console icon regardless of anything set here.
+    // IconLocation points at the app's own .exe (index 0, its first embedded icon
+    // resource — the one electron-builder already baked in from build/icon.png) rather
+    // than a separate file, so it can't go stale if the icon changes later.
+    const lnkPath = join(desktop, `${label}.lnk`);
+    const psScript = [
+      "$s = (New-Object -COM WScript.Shell).CreateShortcut($env:JR_LNK_PATH)",
+      "$s.TargetPath = $env:JR_APP_PATH",
+      "$s.IconLocation = $env:JR_APP_PATH + ',0'",
+      "$s.Save()",
+    ].join("; ");
+    spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", psScript], {
+      env: { ...process.env, JR_LNK_PATH: lnkPath, JR_APP_PATH: appPath },
+    });
     return;
   }
-  // Linux: desktop entry on the Desktop and in Applications.
+  // Linux: desktop entry on the Desktop and in Applications, with a real Icon= path.
+  const iconPath = resolveIconPath();
   const desktop = join(homedir(), "Desktop");
   const applications = join(homedir(), ".local", "share", "applications");
   for (const dir of [desktop, applications]) {
     mkdirSync(dir, { recursive: true });
     writeFileSync(
       join(dir, `${AUTO_START_ID}.desktop`),
-      `[Desktop Entry]\nType=Application\nName=${label}\nExec="${appPath}"\nTerminal=false\nCategories=Utility;\n`,
+      `[Desktop Entry]\nType=Application\nName=${label}\nExec="${appPath}"\nIcon=${iconPath}\nTerminal=false\nCategories=Utility;\n`,
       "utf8"
     );
   }

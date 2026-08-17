@@ -75,15 +75,11 @@ body {
   padding: 0 6px;
 }
 .logo {
-  display: inline-grid;
-  place-items: center;
+  display: block;
   width: 24px;
   height: 24px;
   border-radius: 6px;
-  background: var(--accent);
-  color: var(--bg);
-  font-weight: 600;
-  font-size: 13px;
+  object-fit: cover;
 }
 #steps { list-style: none; padding: 0; margin: 0; flex: 1; }
 #steps li {
