@@ -77,10 +77,14 @@ export function ProviderGridCard({
           className="flex min-w-0 items-center gap-2.5"
         >
           <span
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-control"
+            className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-control"
             style={{ backgroundColor: `${color}22`, color }}
           >
-            <span className="material-symbols-outlined !text-[18px]">{icon}</span>
+            {/* An icon value that isn't a real Material Symbols ligature name (e.g. a
+                bad catalog entry) renders as literal fallback text instead of a glyph —
+                overflow-hidden on the fixed 32px box keeps that contained instead of
+                blowing out the whole card grid (see catalog/providers.ts history). */}
+            <span className="material-symbols-outlined !text-[18px] leading-none">{icon}</span>
           </span>
           <span className="min-w-0 truncate text-sm font-medium text-text-main">{provider.name}</span>
         </Link>

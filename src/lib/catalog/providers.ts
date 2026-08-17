@@ -132,7 +132,7 @@ export const CATALOG_PROVIDERS: CatalogProvider[] = [
     category: "apikey",
     baseUrl: "https://api.openai.com/v1",
     wireFormat: "openai",
-    icon: "openai",
+    icon: "smart_toy",
     color: "#10A37F",
   },
   {
@@ -142,7 +142,7 @@ export const CATALOG_PROVIDERS: CatalogProvider[] = [
     category: "apikey",
     baseUrl: "https://api.anthropic.com",
     wireFormat: "anthropic",
-    icon: "anthropic",
+    icon: "psychology",
     color: "#D97757",
   },
   {
@@ -152,7 +152,7 @@ export const CATALOG_PROVIDERS: CatalogProvider[] = [
     category: "apikey",
     baseUrl: "https://generativelanguage.googleapis.com",
     wireFormat: "gemini",
-    icon: "google",
+    icon: "auto_awesome",
     color: "#4285F4",
   },
   {
@@ -163,7 +163,7 @@ export const CATALOG_PROVIDERS: CatalogProvider[] = [
     // Registry: open-sse/config/providers/registry/deepseek → "https://api.deepseek.com/v1/chat/completions".
     baseUrl: "https://api.deepseek.com/v1",
     wireFormat: "openai",
-    icon: "deepseek",
+    icon: "search",
     color: "#4D6BFE",
   },
   {
@@ -173,7 +173,7 @@ export const CATALOG_PROVIDERS: CatalogProvider[] = [
     category: "apikey",
     baseUrl: "https://api.groq.com/openai/v1",
     wireFormat: "openai",
-    icon: "groq",
+    icon: "bolt",
     color: "#F55036",
   },
   {
@@ -194,7 +194,7 @@ export const CATALOG_PROVIDERS: CatalogProvider[] = [
     category: "apikey",
     baseUrl: "https://openrouter.ai/api/v1",
     wireFormat: "openai",
-    icon: "openrouter",
+    icon: "route",
     color: "#0A0A0A",
   },
 ];

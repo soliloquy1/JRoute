@@ -117,6 +117,34 @@ test("every shipped catalog entry has an expressible wireFormat", () => {
   }
 });
 
+// A brand slug (e.g. icon: "openai") instead of a real Material Symbols Outlined
+// ligature name renders as unstyled fallback text in ProviderGridCard instead of a
+// glyph — this exact bug shipped once (openai/anthropic/google/deepseek/groq/
+// openrouter all had icon === their own id). Pin the allowlist so a future catalog
+// edit can't silently reintroduce it.
+const VALID_MATERIAL_SYMBOLS = new Set([
+  "smart_toy",
+  "auto_awesome",
+  "psychology",
+  "code",
+  "search",
+  "bolt",
+  "route",
+  "cable",
+]);
+
+test("every shipped catalog entry's icon is a real Material Symbols ligature, not a brand slug", () => {
+  for (const c of CATALOG_PROVIDERS) {
+    if (c.wireFormat === null) continue; // deferred — not rendered in the grid
+    assert.ok(c.icon, `${c.id} has no icon`);
+    assert.ok(
+      VALID_MATERIAL_SYMBOLS.has(c.icon as string),
+      `${c.id}'s icon "${c.icon}" is not in the known-valid Material Symbols set — likely a brand slug`
+    );
+    assert.notEqual(c.icon, c.id, `${c.id}'s icon must not equal its own id (the exact shape of the bug)`);
+  }
+});
+
 // Expected upstream endpoint per catalog id, re-derived from
 // open-sse/config/providers/registry/<id>/index.ts. The composition must equal this,
 // catching any catalog baseUrl that drops the version segment or points at a guessed host.
