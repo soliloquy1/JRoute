@@ -117,8 +117,8 @@ export function ConnectionRow({
             }`}
           >
             <span
-              className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-transform ${
-                connection.enabled ? "translate-x-3.5" : "translate-x-0.5"
+              className={`absolute top-0.5 left-0.5 h-3 w-3 rounded-full bg-white transition-transform ${
+                connection.enabled ? "translate-x-3" : "translate-x-0"
               }`}
             />
           </button>
