@@ -4,6 +4,7 @@ import { authenticateDashboard } from "@/lib/auth/guard.ts";
 import { jsonError } from "@jroute/errors.ts";
 import { getRichPreset, updateRichPreset, deleteRichPreset } from "@/lib/db/richPresets.ts";
 import { RichPresetJsonSchema } from "@/lib/prompts/stPresetSchema.ts";
+import { ReasoningTagPairsSchema } from "@/lib/prompts/reasoningTagSchema.ts";
 import { describeIssues, parseIdParam } from "@/lib/api/validation.ts";
 
 const PatchSchema = z
@@ -12,6 +13,7 @@ const PatchSchema = z
     raw: RichPresetJsonSchema.optional(),
     charName: z.string().optional(),
     userName: z.string().optional(),
+    reasoningTags: ReasoningTagPairsSchema.optional(),
   })
   .refine((v) => Object.keys(v).length > 0, "At least one field required");
 
