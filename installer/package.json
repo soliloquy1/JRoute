@@ -3,6 +3,7 @@
   "version": "0.2.0-beta",
   "description": "Cross-platform one-click wizard that installs and runs JRoute (JanitorAI reverse proxy).",
   "license": "MIT",
+  "homepage": "https://github.com/soliloquy1/JRoute",
   "author": "JRoute",
   "private": true,
   "main": "src/main.js",

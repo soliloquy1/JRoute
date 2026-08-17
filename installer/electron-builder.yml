@@ -32,6 +32,9 @@ win:
 
 linux:
   category: Utility
+  # electron-builder's .deb (fpm) target hard-requires a maintainer — set here rather
+  # than adding a personal email to package.json's `author` field.
+  maintainer: JRoute <noreply@github.com>
   target:
     - target: AppImage
       arch:
