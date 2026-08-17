@@ -23,6 +23,8 @@ import { computeLogitBias } from "../src/lib/prompts/logitBias.ts";
 import { getRegexPreset } from "../src/lib/db/regexPresets.ts";
 import { applyRegexScriptsToContent, hasActiveScripts } from "../src/lib/prompts/regexApply.ts";
 import { wrapWithRegexTransform } from "./regexStreamTransform.ts";
+import { hasReasoningTags, applyReasoningTagStrip } from "../src/lib/prompts/reasoningTagScanner.ts";
+import { wrapWithReasoningTransform } from "./reasoningStreamTransform.ts";
 import { debugLog, debugLogError, redactHeaders } from "../src/lib/debugLog/logger.ts";
 import type { ApiKeyRecord } from "../src/lib/db/types.ts";
 import type { TaggedBlock } from "./convert/types.ts";
@@ -246,19 +248,17 @@ export async function handleChat(
     }
   }
 
-  // Loaded once and reused by all three wiring points (User Input here, AI Output
-  // non-streaming and streaming further below) — the preset is fixed for the whole
-  // request lifetime, including the full duration of a streaming response, so a
+  // Loaded once and reused by all four wiring points (User Input regex, AI Output regex
+  // both streaming and non-streaming, AI Output reasoning-tag stripping) — fixed for the
+  // whole request lifetime, including the full duration of a streaming response, so a
   // concurrent preset edit never affects an in-flight request.
+  const activeRichPreset = key.richPresetId !== null ? getRichPreset(key.richPresetId) : null;
+  const reasoningTags = activeRichPreset?.reasoningTags ?? [];
   const regexPreset = key.regexPresetId !== null ? getRegexPreset(key.regexPresetId) : null;
   const regexScripts = regexPreset?.scripts ?? [];
-  const regexMacroCtx: MacroContext =
-    key.richPresetId !== null
-      ? (() => {
-          const rp = getRichPreset(key.richPresetId as number);
-          return rp ? { char: rp.charName, user: rp.userName } : { char: "", user: "" };
-        })()
-      : { char: "", user: "" };
+  const regexMacroCtx: MacroContext = activeRichPreset
+    ? { char: activeRichPreset.charName, user: activeRichPreset.userName }
+    : { char: "", user: "" };
 
   if (key.regexPresetId !== null && !regexPreset) {
     debugLog("regexPreset.stale_reference", { requestId, regexPresetId: key.regexPresetId });
@@ -492,9 +492,12 @@ export async function handleChat(
         stream: true,
         wireFormat: provider.wireFormat,
       });
-      const outStream = hasActiveScripts(regexScripts, 2)
-        ? wrapWithRegexTransform(result.stream, regexScripts, regexMacroCtx, requestId)
+      const reasoningStripped = hasReasoningTags(reasoningTags)
+        ? wrapWithReasoningTransform(result.stream, reasoningTags, requestId)
         : result.stream;
+      const outStream = hasActiveScripts(regexScripts, 2)
+        ? wrapWithRegexTransform(reasoningStripped, regexScripts, regexMacroCtx, requestId)
+        : reasoningStripped;
       return new Response(keepaliveStream(outStream), {
         status: 200,
         headers: sseHeaders(),
@@ -543,9 +546,12 @@ export async function handleChat(
         error,
       });
     });
-    const outStream = hasActiveScripts(regexScripts, 2)
-      ? wrapWithRegexTransform(wrapped, regexScripts, regexMacroCtx, requestId)
+    const reasoningStripped = hasReasoningTags(reasoningTags)
+      ? wrapWithReasoningTransform(wrapped, reasoningTags, requestId)
       : wrapped;
+    const outStream = hasActiveScripts(regexScripts, 2)
+      ? wrapWithRegexTransform(reasoningStripped, regexScripts, regexMacroCtx, requestId)
+      : reasoningStripped;
     debugLog("response.success", {
       requestId,
       connectionId,
@@ -559,6 +565,14 @@ export async function handleChat(
   const outJson = responseConverter
     ? responseConverter.convertResponse(result.json, requestedModel)
     : result.json;
+  if (hasReasoningTags(reasoningTags)) {
+    const msg = (outJson as { choices?: Array<{ message?: { content?: unknown } }> } | null)
+      ?.choices?.[0]?.message;
+    if (msg && typeof msg.content === "string") {
+      msg.content = applyReasoningTagStrip(msg.content, reasoningTags);
+      debugLog("reasoning.aiOutputApplied", { requestId, stream: false });
+    }
+  }
   if (hasActiveScripts(regexScripts, 2)) {
     const msg = (outJson as { choices?: Array<{ message?: { content?: unknown } }> } | null)
       ?.choices?.[0]?.message;
