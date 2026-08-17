@@ -15,6 +15,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "API Keys", href: "/keys", icon: "key" },
   { label: "Presets", href: "/rich-presets", icon: "tune" },
   { label: "Logit Bias", href: "/logit-bias", icon: "filter_alt" },
+  { label: "Regex", href: "/regex-presets", icon: "find_replace" },
   { label: "Prompts & Lorebooks", href: "/prompts", icon: "edit_note" },
   { label: "MCP Servers", href: "/mcp", icon: "dns" },
   { label: "Settings", href: "/settings", icon: "settings" },
