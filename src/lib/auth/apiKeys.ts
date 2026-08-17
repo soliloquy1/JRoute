@@ -103,6 +103,15 @@ export function setApiKeyLogitBiasPreset(id: number, logitBiasPresetId: number |
     .run(logitBiasPresetId, id);
 }
 
+// Independent of presetId/richPresetId/logitBiasPresetId — a regex preset is an
+// orthogonal dimension, applies regardless of upstream wire format (unlike logit_bias,
+// which is OpenAI-wire-format-specific), so this setter does not clear any other column.
+export function setApiKeyRegexPreset(id: number, regexPresetId: number | null): void {
+  getDb()
+    .prepare("UPDATE api_keys SET regex_preset_id = ? WHERE id = ?")
+    .run(regexPresetId, id);
+}
+
 export function listApiKeys(): ApiKeyRecord[] {
   const rows = getDb()
     .prepare("SELECT * FROM api_keys ORDER BY created_at DESC")

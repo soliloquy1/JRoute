@@ -20,9 +20,13 @@ import { runTriggerMode } from "../src/lib/mcp/trigger.ts";
 import { runNativeToolLoop } from "../src/lib/mcp/loop.ts";
 import { getLogitBiasPreset } from "../src/lib/db/logitBiasPresets.ts";
 import { computeLogitBias } from "../src/lib/prompts/logitBias.ts";
+import { getRegexPreset } from "../src/lib/db/regexPresets.ts";
+import { applyRegexScriptsToContent, hasActiveScripts } from "../src/lib/prompts/regexApply.ts";
+import { wrapWithRegexTransform } from "./regexStreamTransform.ts";
 import { debugLog, debugLogError, redactHeaders } from "../src/lib/debugLog/logger.ts";
 import type { ApiKeyRecord } from "../src/lib/db/types.ts";
 import type { TaggedBlock } from "./convert/types.ts";
+import type { MacroContext } from "../src/lib/prompts/macros.ts";
 
 function newRequestId(): string {
   return Math.random().toString(36).slice(2, 10);
@@ -239,6 +243,38 @@ export async function handleChat(
         presetId: key.logitBiasPresetId,
         wireFormat: provider.wireFormat,
       });
+    }
+  }
+
+  // Loaded once and reused by all three wiring points (User Input here, AI Output
+  // non-streaming and streaming further below) — the preset is fixed for the whole
+  // request lifetime, including the full duration of a streaming response, so a
+  // concurrent preset edit never affects an in-flight request.
+  const regexPreset = key.regexPresetId !== null ? getRegexPreset(key.regexPresetId) : null;
+  const regexScripts = regexPreset?.scripts ?? [];
+  const regexMacroCtx: MacroContext =
+    key.richPresetId !== null
+      ? (() => {
+          const rp = getRichPreset(key.richPresetId as number);
+          return rp ? { char: rp.charName, user: rp.userName } : { char: "", user: "" };
+        })()
+      : { char: "", user: "" };
+
+  if (key.regexPresetId !== null && !regexPreset) {
+    debugLog("regexPreset.stale_reference", { requestId, regexPresetId: key.regexPresetId });
+  }
+
+  if (hasActiveScripts(regexScripts, 1)) {
+    const messages = body.messages as Array<{ role: string; content?: unknown }>;
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (messages[i].role === "user") {
+        messages[i] = {
+          ...messages[i],
+          content: applyRegexScriptsToContent(messages[i].content, regexScripts, 1, regexMacroCtx),
+        };
+        debugLog("regex.userInputApplied", { requestId, regexPresetId: key.regexPresetId });
+        break;
+      }
     }
   }
 
