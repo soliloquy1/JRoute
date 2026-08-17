@@ -43,3 +43,8 @@ export const ReasoningTagPairsSchema = z
   });
 
 export type ReasoningTagPair = z.infer<typeof ReasoningTagPairSchema>;
+// The *input* shape a caller may pass without spelling out `expectImplicitOpen` (the
+// schema's `.default(false)` fills it). The DB write functions accept this looser shape
+// and normalize through `ReasoningTagPairsSchema.parse` before persisting.
+export type ReasoningTagPairInput = z.input<typeof ReasoningTagPairSchema>;
+export type ReasoningTagPairsInput = z.input<typeof ReasoningTagPairsSchema>;

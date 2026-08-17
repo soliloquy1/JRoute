@@ -4,7 +4,7 @@ import { RichPresetJsonSchema } from "../prompts/stPresetSchema.ts";
 import { ReasoningTagPairsSchema } from "../prompts/reasoningTagSchema.ts";
 import type { RichPreset } from "./types.ts";
 import type { RichPresetJson } from "../prompts/stPresetSchema.ts";
-import type { ReasoningTagPair } from "../prompts/reasoningTagSchema.ts";
+import type { ReasoningTagPair, ReasoningTagPairsInput } from "../prompts/reasoningTagSchema.ts";
 
 interface RichPresetRow {
   id: number;
@@ -41,7 +41,7 @@ function toRichPreset(row: RichPresetRow): RichPreset {
 export function createRichPreset(
   name: string,
   raw: unknown,
-  opts: Partial<{ charName: string; userName: string; reasoningTags: ReasoningTagPair[] }> = {}
+  opts: Partial<{ charName: string; userName: string; reasoningTags: ReasoningTagPairsInput }> = {}
 ): number {
   const parsed = RichPresetJsonSchema.parse(raw);
   const reasoningTags = ReasoningTagPairsSchema.parse(opts.reasoningTags ?? []);
@@ -79,7 +79,7 @@ export function updateRichPreset(
     raw: unknown;
     charName: string;
     userName: string;
-    reasoningTags: ReasoningTagPair[];
+    reasoningTags: ReasoningTagPairsInput;
   }>
 ): void {
   const sets: string[] = [];
