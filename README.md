@@ -1,6 +1,10 @@
 # JRoute
+### Break the chains — For real this time.
+**No company. No filters. No catch.**
 
 A self-hosted reverse proxy for [JanitorAI](https://janitorai.com).
+
+For the full setup guide, see [the docs](https://soliloquy.gitbook.io/jroute).
 
 JRoute exposes an OpenAI-compatible endpoint that Janitor's frontend calls directly,
 forwards requests to whichever LLM provider you configure, and adds three things Janitor
@@ -20,7 +24,32 @@ cannot do on its own:
   plus per-provider usage analytics, so you can see what's actually happening across every
   connection instead of guessing from Janitor's own error messages.
 
-For the full setup guide, see [the docs](https://soliloquy.gitbook.io/jroute).
+## Why JRoute?
+
+**Your roleplay** — no overhead, no compromises. More features, 
+full privacy, fully open source.
+
+**The full roleplay experience**, on any frontend — JanitorAI included.
+
+No other reverse proxy lets you port your **full SillyTavern setup** — rich presets, ST-style regex post-processing, 
+logit bias — into one place, with auto-routing across every provider you use. Not JanitorAI itself. 
+Not even the big closed-source proxies with their special plugins.
+
+**JRoute doesn't snoop. It's private. It's entirely yours.**
+
+## Disclaimer
+
+JRoute is a routing tool — it forwards requests to whatever providers you configure, exactly
+as configured by you. It doesn't modify, bypass, or circumvent anyone's terms of service,
+rate limits, or content policies.
+
+You're responsible for complying with the terms of service of JanitorAI, every LLM provider
+you connect, and any other frontend you use JRoute with. This project doesn't endorse or
+encourage violating any of them.
+
+JRoute is an independent, community project and is not affiliated with, endorsed by, or
+sponsored by JanitorAI, any LLM provider, or any other frontend or company named in this
+document or in app.
 
 ## Installing
 
@@ -37,17 +66,6 @@ cd JRoute
 npm install
 npm run dev
 ```
-
-## Why a fork
-
-JRoute began as a fork of [OmniRoute](https://github.com/diegosouzapw/OmniRoute), a
-general-purpose AI router supporting ~300 providers with 19 routing strategies, context
-compression, agent protocols, and a 55-page dashboard.
-
-That is a great deal more than a JanitorAI proxy needs. JRoute keeps the parts that serve
-one use case — a handful of API-key and OAuth providers with flat priority fallback — and
-drops the routing intelligence and compression entirely. Roughly 707k lines of TypeScript
-became a target of 20–25k.
 
 ## Requirements
 
