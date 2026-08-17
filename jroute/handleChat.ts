@@ -3,13 +3,13 @@ import { z } from "zod";
 import { jsonError } from "./errors.ts";
 import { listConnections, markCooldown, clearCooldown } from "../src/lib/db/connections.ts";
 import { logUsage } from "../src/lib/db/usageLogs.ts";
-import { recordUsage, parseQuotaThresholds } from "../src/lib/db/quotaWindows.ts";
+import { recordUsage, parseQuotaThresholds, isOverQuota } from "../src/lib/db/quotaWindows.ts";
 import { getOAuthToken, isTokenValid } from "../src/lib/db/oauthTokens.ts";
 import { oauthTokenKey } from "../src/lib/oauth/tokenKey.ts";
 import { refreshOAuthToken } from "../src/lib/oauth/refresh.ts";
 import { eligibleConnections, applyFallbackStrategy } from "./selectConnection.ts";
 import { getFallbackStrategy } from "../src/lib/db/settings.ts";
-import { setLastConnectionId } from "../src/lib/db/providerRoutingState.ts";
+import { getLastConnectionId, setLastConnectionId } from "../src/lib/db/providerRoutingState.ts";
 import { execute, cooldownMsFor } from "./executor.ts";
 import { keepaliveStream, sseHeaders } from "./sse.ts";
 import { resolveModel } from "./resolveModel.ts";
@@ -230,9 +230,10 @@ export async function handleChat(
 
   const fallbackStrategy = getFallbackStrategy();
   const candidates = applyFallbackStrategy(
-    eligibleConnections(listConnections(providerId), Date.now()),
+    eligibleConnections(listConnections(providerId), Date.now(), isOverQuota),
     fallbackStrategy,
-    providerId
+    providerId,
+    getLastConnectionId
   );
   debugLog("connections.eligible", {
     requestId,

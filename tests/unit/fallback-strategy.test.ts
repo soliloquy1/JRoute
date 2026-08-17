@@ -61,7 +61,7 @@ test("applyFallbackStrategy: priority strategy is a no-op", () => {
   const a = createConnection("openai", "a", "sk-a");
   const b = createConnection("openai", "b", "sk-b");
   const list = [{ id: a }, { id: b }] as never;
-  const out = applyFallbackStrategy(list, "priority", "openai");
+  const out = applyFallbackStrategy(list, "priority", "openai", getLastConnectionId);
   assert.deepEqual(out, list);
 });
 
@@ -69,7 +69,7 @@ test("applyFallbackStrategy: round-robin with no cursor is a no-op (starts at pr
   const a = createConnection("openai", "a", "sk-a");
   const b = createConnection("openai", "b", "sk-b");
   const list = [{ id: a }, { id: b }] as never;
-  const out = applyFallbackStrategy(list, "round-robin", "openai");
+  const out = applyFallbackStrategy(list, "round-robin", "openai", getLastConnectionId);
   assert.deepEqual(
     out.map((c: { id: number }) => c.id),
     [a, b]
@@ -82,7 +82,7 @@ test("applyFallbackStrategy: round-robin rotates to start after the last-used co
   const c = createConnection("openai", "c", "sk-c");
   setLastConnectionId("openai", a);
   const list = [{ id: a }, { id: b }, { id: c }] as never;
-  const out = applyFallbackStrategy(list, "round-robin", "openai");
+  const out = applyFallbackStrategy(list, "round-robin", "openai", getLastConnectionId);
   assert.deepEqual(
     out.map((x: { id: number }) => x.id),
     [b, c, a],
@@ -95,7 +95,7 @@ test("applyFallbackStrategy: round-robin falls back to natural order when the cu
   const b = createConnection("openai", "b", "sk-b");
   setLastConnectionId("openai", 99999); // deleted/never-existed connection id
   const list = [{ id: a }, { id: b }] as never;
-  const out = applyFallbackStrategy(list, "round-robin", "openai");
+  const out = applyFallbackStrategy(list, "round-robin", "openai", getLastConnectionId);
   assert.deepEqual(
     out.map((x: { id: number }) => x.id),
     [a, b]

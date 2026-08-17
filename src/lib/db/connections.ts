@@ -167,3 +167,17 @@ export function getConnectionByProviderAndLabel(
     .get(providerId, label) as ConnectionRow | undefined;
   return row ? toConnection(row) : null;
 }
+
+/**
+ * Count of distinct providers that have at least one connection. Since catalog
+ * providers are auto-seeded into the `providers` table at boot, `listProviders().length`
+ * is nonzero on every fresh install even with zero credentials configured — the
+ * Overview "getting started" checklist needs this instead, or its "Add a provider"
+ * step reads as done before the operator has done anything.
+ */
+export function countProvidersWithConnections(): number {
+  const row = getDb()
+    .prepare("SELECT COUNT(DISTINCT provider_id) as n FROM connections")
+    .get() as { n: number };
+  return row.n;
+}

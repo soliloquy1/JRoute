@@ -1,6 +1,6 @@
 import { getUsageSummary, getDailyRequestCounts } from "@/lib/db/usageLogs.ts";
 import { listApiKeys } from "@/lib/auth/apiKeys.ts";
-import { listProviders } from "@/lib/db/providers.ts";
+import { countProvidersWithConnections } from "@/lib/db/connections.ts";
 import { listRichPresets } from "@/lib/db/richPresets.ts";
 import { StatCard } from "@/components/dashboard/StatCard.tsx";
 import { BarChart } from "@/components/dashboard/BarChart.tsx";
@@ -18,7 +18,10 @@ function getOverviewData() {
   const todaySummary = getUsageSummary(startOfTodayMs());
   const last24h = getUsageSummary(Date.now() - DAY_MS);
   const activeKeys = listApiKeys().length;
-  const providerCount = listProviders().length;
+  // Catalog providers are auto-seeded at boot, so a raw provider-row count is nonzero
+  // on a fresh install with zero credentials configured — count providers that
+  // actually have a connection instead, so the checklist reflects real setup progress.
+  const providerCount = countProvidersWithConnections();
   const presetCount = listRichPresets().length;
   const errorRate =
     last24h.requestCount > 0 ? Math.round((last24h.errorCount / last24h.requestCount) * 100) : 0;

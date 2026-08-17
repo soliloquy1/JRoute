@@ -62,7 +62,14 @@ export function getProviderByPrefix(prefix: string): Provider | null {
 }
 
 export function deleteProvider(id: string): void {
-  getDb().prepare("DELETE FROM providers WHERE id = ?").run(id);
+  const db = getDb();
+  const tx = db.transaction(() => {
+    db.prepare("DELETE FROM providers WHERE id = ?").run(id);
+    // Record the deletion so seedCatalogProviders() (which runs on every boot, not
+    // just the first) never resurrects it — see migration 012.
+    db.prepare("INSERT OR IGNORE INTO deleted_catalog_provider_ids (provider_id) VALUES (?)").run(id);
+  });
+  tx();
 }
 
 export function upsertProvider(p: Provider): void {
@@ -108,6 +115,9 @@ export function upsertProvider(p: Provider): void {
     }
     throw e;
   }
+  // Explicitly re-adding a provider (e.g. re-picking it from the catalog grid after a
+  // prior delete) un-blocks future catalog reseeds for this id too.
+  getDb().prepare("DELETE FROM deleted_catalog_provider_ids WHERE provider_id = ?").run(p.id);
   // Keep legacy convenience: a freshly added default provider (openai/anthropic/google)
   // automatically gets its well-known models, just like the old static MODEL_MAP. Only
   // on creation — an edit to an existing provider (e.g. changing its prefix) shouldn't
@@ -116,14 +126,24 @@ export function upsertProvider(p: Provider): void {
 }
 
 /**
- * Seed the curated provider catalog into the `providers` table on first boot.
- * Uses INSERT OR IGNORE on the provider id so operator-created/edited rows are
- * never overwritten on subsequent boots (mirrors seedDefaultModels()'s idempotency).
+ * Seed the curated provider catalog into the `providers` table. Runs on every boot
+ * (not just the first), so two guards keep it idempotent in both directions:
+ * INSERT OR IGNORE means operator-created/edited rows are never overwritten
+ * (mirrors seedDefaultModels()'s idempotency), and skipping ids recorded in
+ * `deleted_catalog_provider_ids` means a provider the operator explicitly deleted
+ * stays deleted instead of resurrecting on the next restart (migration 012).
  * Only shippable catalog entries (those with a concrete wireFormat) are seeded —
  * deferred OAuth providers are documented but intentionally not created as dead rows.
  */
 export function seedCatalogProviders(): void {
-  const insert = getDb().prepare(
+  const db = getDb();
+  const deletedIds = new Set(
+    db
+      .prepare("SELECT provider_id FROM deleted_catalog_provider_ids")
+      .all()
+      .map((r) => (r as { provider_id: string }).provider_id)
+  );
+  const insert = db.prepare(
     `INSERT OR IGNORE INTO providers
         (id, name, kind, base_url, wire_format, enabled, model_prefix, oauth_provider, provider_specific_data)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -131,6 +151,7 @@ export function seedCatalogProviders(): void {
   const tx = getDb().transaction(() => {
     for (const c of CATALOG_PROVIDERS) {
       if (!c.wireFormat) continue; // deferred — skip
+      if (deletedIds.has(c.id)) continue; // operator explicitly removed it — stay removed
       insert.run(
         c.id,
         c.name,

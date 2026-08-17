@@ -50,6 +50,40 @@ test("seedCatalogProviders is idempotent", () => {
   assert.equal(secondClaude?.baseUrl, firstClaude?.baseUrl, "re-seed must not alter existing rows");
 });
 
+test("seedCatalogProviders does not resurrect a provider the operator explicitly deleted", async () => {
+  const { deleteProvider } = await import("../../src/lib/db/providers.ts");
+  assert.ok(getProvider("claude"), "precondition: claude is seeded");
+  deleteProvider("claude");
+  assert.equal(getProvider("claude"), null);
+  // A restart re-seeds — the deletion must survive it.
+  seedCatalogProviders();
+  assert.equal(getProvider("claude"), null, "deleted catalog provider must not resurrect on reseed");
+});
+
+test("re-adding a deleted catalog provider un-blocks future reseeds for that id", async () => {
+  const { deleteProvider } = await import("../../src/lib/db/providers.ts");
+  deleteProvider("claude");
+  seedCatalogProviders();
+  assert.equal(getProvider("claude"), null);
+
+  // Operator manually re-adds it (e.g. re-picks it from the catalog grid).
+  upsertProvider({
+    id: "claude",
+    name: "Claude Code",
+    kind: "oauth",
+    baseUrl: "https://api.anthropic.com",
+    wireFormat: "anthropic",
+    enabled: true,
+    oauthProvider: "claude",
+  });
+  // If the operator now also deletes it via some OTHER path (a raw purge, not through
+  // deleteProvider()), the id is no longer in deleted_catalog_provider_ids, so a
+  // reseed restores it from the catalog rather than leaving it gone forever.
+  getDb().prepare("DELETE FROM providers WHERE id = 'claude'").run();
+  seedCatalogProviders();
+  assert.ok(getProvider("claude"), "un-blocked id reseeds normally");
+});
+
 test("seedCatalogProviders never overwrites an operator-edited row", () => {
   // Operator edits a seeded provider's baseUrl.
   upsertProvider({

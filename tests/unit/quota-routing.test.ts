@@ -69,7 +69,7 @@ test("eligibleConnections skips an over-quota connection and keeps healthy ones"
     quotaWindowThresholds: JSON.stringify({ requests: 1, windowMs: 60000 }),
   });
   recordUsage(limited, 1, 0, Date.now());
-  const eligible = eligibleConnections(listConnections("openai"), Date.now());
+  const eligible = eligibleConnections(listConnections("openai"), Date.now(), isOverQuota);
   assert.deepEqual(
     eligible.map((c) => c.id),
     [healthy]
