@@ -1,5 +1,6 @@
 import type { RichPresetJson } from "../prompts/stPresetSchema.ts";
 import type { LogitBiasEntry } from "../prompts/logitBiasSchema.ts";
+import type { RegexScript } from "../prompts/regexScriptSchema.ts";
 
 export type WireFormat = "openai" | "anthropic" | "gemini";
 export type ProviderKind = "apikey" | "oauth";
@@ -96,11 +97,6 @@ export interface LogitBiasPreset {
 }
 
 export type McpTransport = "http" | "sse" | "stdio" | "builtin";
-
-// Placeholder until a later commit in this range lands the real schema-derived type
-// (src/lib/prompts/regexScriptSchema.ts), which replaces this alias with an import of the
-// inferred `RegexScript` type.
-export type RegexScript = Record<string, unknown>;
 
 export interface RegexPreset {
   id: number;
