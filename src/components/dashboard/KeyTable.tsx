@@ -3,7 +3,13 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import type { ApiKeyRecord, Preset, RichPreset, LogitBiasPreset } from "@/lib/db/types.ts";
+import type {
+  ApiKeyRecord,
+  Preset,
+  RichPreset,
+  LogitBiasPreset,
+  RegexPreset,
+} from "@/lib/db/types.ts";
 import { EmptyState, InlineError } from "./ui.tsx";
 
 /**
@@ -34,11 +40,13 @@ export function KeyTable({
   presets,
   richPresets,
   logitBiasPresets,
+  regexPresets,
 }: {
   keys: ApiKeyRecord[];
   presets: Preset[];
   richPresets: RichPreset[];
   logitBiasPresets: LogitBiasPreset[];
+  regexPresets: RegexPreset[];
 }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
@@ -77,6 +85,20 @@ export function KeyTable({
     router.refresh();
   }
 
+  async function setRegexPreset(id: number, value: string) {
+    setError(null);
+    const res = await fetch(`/api/keys/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ regexPresetId: value === "" ? null : Number(value) }),
+    });
+    if (!res.ok) {
+      setError(`Failed to update regex preset for key ${id}`);
+      return;
+    }
+    router.refresh();
+  }
+
   async function revoke(id: number, label: string) {
     if (!window.confirm(`Revoke key "${label}"? Clients using it will stop working immediately.`))
       return;
@@ -108,6 +130,7 @@ export function KeyTable({
             <th className="px-4 py-2.5 font-medium">Tool mode</th>
             <th className="px-4 py-2.5 font-medium">Preset</th>
             <th className="px-4 py-2.5 font-medium">Logit bias</th>
+            <th className="px-4 py-2.5 font-medium">Regex</th>
             <th className="px-4 py-2.5" />
           </tr>
         </thead>
@@ -189,6 +212,20 @@ export function KeyTable({
                     OpenAI-wire only
                   </div>
                 )}
+              </td>
+              <td className="px-4 py-2.5">
+                <select
+                  value={k.regexPresetId === null ? "" : String(k.regexPresetId)}
+                  onChange={(e) => setRegexPreset(k.id, e.target.value)}
+                  className="rounded-control border border-border-strong bg-card px-2 py-1 text-xs text-text-main focus:border-primary"
+                >
+                  <option value="">none</option>
+                  {regexPresets.map((p) => (
+                    <option key={p.id} value={String(p.id)}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
               </td>
               <td className="px-4 py-2.5 text-right">
                 <button
