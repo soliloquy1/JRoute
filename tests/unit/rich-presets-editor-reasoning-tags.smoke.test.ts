@@ -18,7 +18,7 @@ test("RichPresetsEditor renders configured reasoning tag rows", () => {
         {
           id: 1,
           name: "Izumi",
-          raw: { prompts: [{ identifier: "p1" }], prompt_order: [] },
+          raw: { prompts: [{ identifier: "p1", name: "System", role: "system" }], prompt_order: [] },
           charName: "",
           userName: "",
           createdAt: 0,
