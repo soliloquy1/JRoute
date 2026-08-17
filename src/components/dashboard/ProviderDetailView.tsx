@@ -1,14 +1,27 @@
 // src/components/dashboard/ProviderDetailView.tsx
 import Link from "next/link";
 import type { Connection, Provider } from "@/lib/db/types.ts";
+import { getCatalogProvider } from "@/lib/catalog/index.ts";
 import { getProviderQuotaStatus } from "@/lib/db/analytics.ts";
 import { ModelManager, type ModelRowData } from "./ModelManager.tsx";
-import { ToastProvider, StatusDot, SectionTitle } from "./ui.tsx";
+import { ConnectionList, type ConnectionListItem } from "./ConnectionList.tsx";
+import { AddConnectionButton } from "./AddConnectionButton.tsx";
+import { RemoveProviderButton } from "./RemoveProviderButton.tsx";
+import { ProviderPrefixEditor } from "./ProviderPrefixEditor.tsx";
+import { ToastProvider, StatusDot, SectionTitle, EmptyState } from "./ui.tsx";
 
 // Read the clock in a named helper so the impure `Date.now()` call stays out of the
-// component render body (react-hooks/purity). Mirrors ProviderCard.isConnectionHealthy.
+// component render body (react-hooks/purity).
 function clockNow(): number {
   return Date.now();
+}
+
+function isConnectionHealthy(connection: Connection, now: number): boolean {
+  return (
+    connection.enabled &&
+    !connection.credentialDecryptFailed &&
+    (connection.cooldownUntil === null || connection.cooldownUntil <= now)
+  );
 }
 
 /**
@@ -29,69 +42,82 @@ export function ProviderDetailView({
   const quotaByConnection = new Map(
     getProviderQuotaStatus(provider.id, now).map((q) => [q.connectionId, q])
   );
+  const items: ConnectionListItem[] = connections.map((c) => {
+    const q = quotaByConnection.get(c.id);
+    return {
+      connection: c,
+      healthy: isConnectionHealthy(c, now),
+      quota: q
+        ? {
+            requests: q.requests,
+            requestLimit: q.requestLimit,
+            tokens: q.tokens,
+            tokenLimit: q.tokenLimit,
+            overQuota: q.overQuota,
+          }
+        : undefined,
+    };
+  });
+  // A catalog provider's routing prefix is fixed by the catalog (matches the wire
+  // format / registry it was curated against) — only operator-added custom
+  // ("compatible") providers, absent from the catalog, get an editable prefix.
+  const isCatalogProvider = getCatalogProvider(provider.id) !== null;
 
   return (
-    <div className="flex max-w-4xl flex-col gap-6">
-      <div>
-        <Link
-          href="/providers"
-          className="text-xs text-accent transition-colors hover:text-accent/80"
-        >
-          ← Providers
-        </Link>
-        <div className="mt-2 flex items-center gap-3">
-          <h1 className="text-xl font-semibold text-text-main">{provider.name}</h1>
-          <StatusDot
-            tone={provider.enabled ? "ok" : "idle"}
-            label={provider.enabled ? "enabled" : "disabled"}
-          />
+    <ToastProvider>
+      <div className="flex max-w-4xl flex-col gap-6">
+        <div>
+          <Link href="/models" className="text-xs text-accent transition-colors hover:text-accent/80">
+            ← Models
+          </Link>
+          <div className="mt-2 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <h1 className="text-xl font-semibold text-text-main">{provider.name}</h1>
+              <StatusDot
+                tone={provider.enabled ? "ok" : "idle"}
+                label={provider.enabled ? "enabled" : "disabled"}
+              />
+            </div>
+            <RemoveProviderButton providerId={provider.id} />
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11px] text-text-muted">
+            <span className="truncate">
+              {provider.id} · {provider.baseUrl} · {provider.wireFormat}
+            </span>
+            {isCatalogProvider ? (
+              <span title="Fixed by the provider catalog">prefix: {provider.modelPrefix || "(none)"}</span>
+            ) : (
+              <ProviderPrefixEditor providerId={provider.id} prefix={provider.modelPrefix ?? ""} />
+            )}
+          </div>
         </div>
-        <p className="mt-1 truncate font-mono text-[11px] text-text-muted">
-          {provider.id} · {provider.baseUrl} · {provider.wireFormat}
-          {provider.modelPrefix ? ` · prefix: ${provider.modelPrefix}` : ""}
-        </p>
-      </div>
 
-      <section className="flex flex-col gap-3">
-        <SectionTitle>Models</SectionTitle>
-        <ToastProvider>
+        <section className="flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <SectionTitle>Connections</SectionTitle>
+            <AddConnectionButton
+              providerId={provider.id}
+              providerName={provider.name}
+              providerKind={provider.kind}
+              oauthProviderKey={provider.oauthProvider}
+            />
+          </div>
+          {items.length === 0 ? (
+            <EmptyState
+              icon="cable"
+              title="No connections yet"
+              body="Add a connection with an API key or OAuth token to start routing traffic through this provider."
+            />
+          ) : (
+            <ConnectionList items={items} />
+          )}
+        </section>
+
+        <section className="flex flex-col gap-3">
+          <SectionTitle>Models</SectionTitle>
           <ModelManager providerId={provider.id} models={models} />
-        </ToastProvider>
-      </section>
-
-      <section className="flex flex-col gap-3">
-        <SectionTitle>Connections</SectionTitle>
-        {connections.length === 0 ? (
-          <p className="text-xs text-text-muted">No connections yet. Add one from the Providers page.</p>
-        ) : (
-          <ul className="flex flex-col gap-2">
-            {connections.map((c) => {
-              const q = quotaByConnection.get(c.id);
-              const overQuota = q?.overQuota ?? false;
-              const inCooldown = c.cooldownUntil != null && c.cooldownUntil > now;
-              return (
-                <li
-                  key={c.id}
-                  className="flex items-center justify-between gap-3 rounded-control border border-border bg-bg px-3 py-2"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate text-sm text-text-main">{c.label}</p>
-                    <p className="text-[10px] text-text-muted">
-                      priority {c.priority}
-                      {q?.requestLimit != null ? ` · quota ${q.requests}/${q.requestLimit} req` : ""}
-                      {q?.tokenLimit != null ? ` · ${q.tokens}/${q.tokenLimit} tok` : ""}
-                    </p>
-                  </div>
-                  <StatusDot
-                    tone={overQuota ? "error" : inCooldown ? "warn" : "ok"}
-                    label={overQuota ? "over quota" : inCooldown ? "cooldown" : "ok"}
-                  />
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </section>
-    </div>
+        </section>
+      </div>
+    </ToastProvider>
   );
 }

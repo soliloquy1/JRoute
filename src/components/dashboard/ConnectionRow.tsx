@@ -4,16 +4,20 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Connection } from "@/lib/db/types.ts";
+import type { ConnectionQuotaInfo } from "./ConnectionList.tsx";
 
 export function ConnectionRow({
   connection,
   healthy,
+  quota,
 }: {
   connection: Connection;
   healthy: boolean;
+  quota?: ConnectionQuotaInfo;
 }) {
   const router = useRouter();
   const [testing, setTesting] = useState(false);
+  const [toggling, setToggling] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,18 +43,51 @@ export function ConnectionRow({
     router.refresh();
   }
 
+  async function toggleEnabled() {
+    if (toggling) return;
+    setToggling(true);
+    setError(null);
+    const res = await fetch(`/api/connections/${connection.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: !connection.enabled }),
+    });
+    setToggling(false);
+    if (!res.ok) {
+      setError("Failed to update connection");
+      return;
+    }
+    router.refresh();
+  }
+
+  const statusLabel = !connection.enabled ? "disabled" : healthy ? "connected" : "cooling down";
+  const statusColor = !connection.enabled
+    ? "bg-text-muted"
+    : healthy
+      ? "bg-success"
+      : "bg-error";
+
   return (
     <div className="rounded-control border border-border bg-bg px-2.5 py-2">
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2 text-sm text-text-main">
-          <span
-            className={`h-1.5 w-1.5 shrink-0 rounded-full ${healthy ? "bg-success" : "bg-error"}`}
-            title={healthy ? "Healthy" : "Cooling down"}
-          />
+          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusColor}`} title={statusLabel} />
           <span className="truncate">{connection.label}</span>
+          <span className="shrink-0 font-mono text-[10px] text-text-muted">#{connection.priority}</span>
           {connection.credentialDecryptFailed && (
             <span className="shrink-0 rounded-full bg-error/10 px-1.5 py-0.5 text-[10px] text-error">
               key undecryptable
+            </span>
+          )}
+          {quota && (quota.requestLimit !== null || quota.tokenLimit !== null) && (
+            <span
+              className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] ${
+                quota.overQuota ? "bg-error/10 text-error" : "bg-bg-subtle text-text-muted"
+              }`}
+            >
+              {quota.requestLimit !== null ? `${quota.requests}/${quota.requestLimit} req` : ""}
+              {quota.requestLimit !== null && quota.tokenLimit !== null ? " · " : ""}
+              {quota.tokenLimit !== null ? `${quota.tokens}/${quota.tokenLimit} tok` : ""}
             </span>
           )}
         </div>
@@ -68,6 +105,22 @@ export function ConnectionRow({
             className="rounded-control px-2 py-1 text-xs text-text-muted transition-colors hover:bg-bg-subtle hover:text-text-main disabled:opacity-50"
           >
             {testing ? "Testing…" : "Test"}
+          </button>
+          <button
+            onClick={toggleEnabled}
+            disabled={toggling}
+            role="switch"
+            aria-checked={connection.enabled}
+            title={connection.enabled ? "Disable connection" : "Enable connection"}
+            className={`relative h-4 w-7 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
+              connection.enabled ? "bg-primary" : "bg-bg-subtle"
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-transform ${
+                connection.enabled ? "translate-x-3.5" : "translate-x-0.5"
+              }`}
+            />
           </button>
           <button
             onClick={remove}

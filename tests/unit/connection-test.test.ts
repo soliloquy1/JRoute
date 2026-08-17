@@ -107,6 +107,42 @@ test("getConnectionById returns null for a missing id", () => {
   assert.equal(getConnectionById(999999), null);
 });
 
+test("an oauth connection's test uses the stored oauth token, not a blind empty bearer", async () => {
+  process.env.STORAGE_ENCRYPTION_KEY = "0".repeat(64);
+  const { upsertOAuthToken } = await import("../../src/lib/db/oauthTokens.ts");
+  const { createModel } = await import("../../src/lib/db/models.ts");
+  upsertProvider({
+    id: "claude",
+    name: "Claude Code",
+    kind: "oauth",
+    baseUrl: "https://api.anthropic.com",
+    wireFormat: "anthropic",
+    enabled: true,
+    oauthProvider: "claude",
+  });
+  createModel("claude", "claude-3-5-sonnet");
+  const oauthConnId = createConnection("claude", "primary", "");
+  upsertOAuthToken({
+    provider: "claude",
+    connectionId: oauthConnId,
+    accessToken: "real-oauth-token",
+    refreshToken: null,
+    expiresAt: Date.now() + 60_000,
+  });
+
+  let capturedAuthHeader: string | null = null;
+  fetchStub = async (_url, init) => {
+    capturedAuthHeader = new Headers(init?.headers).get("x-api-key");
+    return new Response('{"content":[{"type":"text","text":"pong"}]}', {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const result = await testConnection(oauthConnId);
+  assert.equal(result.ok, true);
+  assert.equal(capturedAuthHeader, "real-oauth-token", "must dial with the stored oauth token, not an empty apiKey");
+});
+
 test("POST /api/connections/:id/test without a session is 401", async () => {
   const res = await testRoute.POST(
     new Request(`https://x/api/connections/${connId}/test`, { method: "POST" }),

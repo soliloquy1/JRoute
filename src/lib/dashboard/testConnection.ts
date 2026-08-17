@@ -4,6 +4,8 @@ import { getProvider } from "@/lib/db/providers.ts";
 import { getConverter } from "@jroute/convert/registry.ts";
 import { listModelIds, lookupModel } from "@jroute/convert/models.ts";
 import { execute, cooldownMsFor } from "@jroute/executor.ts";
+import { getOAuthToken, isTokenValid } from "@/lib/db/oauthTokens.ts";
+import { oauthTokenKey } from "@/lib/oauth/tokenKey.ts";
 
 export interface TestConnectionResult {
   ok: boolean;
@@ -45,6 +47,17 @@ export async function testConnection(connectionId: number): Promise<TestConnecti
     blocks: [],
   });
 
+  // Without this, an oauth-kind connection's test always dials with an empty bearer:
+  // execute() only consults oauth_tokens through an injected resolver (never getDb()
+  // itself), so omitting it here silently falls back to connection.apiKey — empty for
+  // oauth connections — and every OAuth connection test blind-401s regardless of
+  // whether the stored token is actually valid.
+  const tokenResolver = (connectionId: number): string | null => {
+    if (provider.kind !== "oauth") return null;
+    const t = getOAuthToken(oauthTokenKey(provider), connectionId);
+    return isTokenValid(t) ? (t.accessToken as string) : null;
+  };
+
   const result = await execute({
     provider,
     connection,
@@ -52,6 +65,7 @@ export async function testConnection(connectionId: number): Promise<TestConnecti
     signal: AbortSignal.timeout(10000),
     model,
     stream: false,
+    tokenResolver,
   });
 
   if (result.ok) {

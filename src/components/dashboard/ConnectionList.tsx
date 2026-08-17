@@ -21,19 +21,28 @@ import type { Connection } from "@/lib/db/types.ts";
 import { ConnectionRow } from "./ConnectionRow.tsx";
 import { useToast } from "./ui.tsx";
 
+export interface ConnectionQuotaInfo {
+  requests: number;
+  requestLimit: number | null;
+  tokens: number;
+  tokenLimit: number | null;
+  overQuota: boolean;
+}
+
 export interface ConnectionListItem {
   connection: Connection;
   healthy: boolean;
+  quota?: ConnectionQuotaInfo;
 }
 
-function SortableRow({ connection, healthy }: ConnectionListItem) {
+function SortableRow({ connection, healthy, quota }: ConnectionListItem) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
     id: connection.id,
   });
   const style = { transform: CSS.Transform.toString(transform), transition };
   return (
     <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
-      <ConnectionRow connection={connection} healthy={healthy} />
+      <ConnectionRow connection={connection} healthy={healthy} quota={quota} />
     </div>
   );
 }
@@ -94,6 +103,7 @@ export function ConnectionList({ items: initialItems }: { items: ConnectionListI
               key={item.connection.id}
               connection={item.connection}
               healthy={item.healthy}
+              quota={item.quota}
             />
           ))}
         </div>

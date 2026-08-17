@@ -1,24 +1,85 @@
 // src/app/(dashboard)/models/page.tsx
-import { listModels } from "@/lib/db/models.ts";
 import { listProviders } from "@/lib/db/providers.ts";
-import { ModelsManager } from "@/components/dashboard/ModelsManager.tsx";
+import { listConnections } from "@/lib/db/connections.ts";
+import { categoryForProvider, getCatalogProvider } from "@/lib/catalog/index.ts";
+import { ProviderGridCard } from "@/components/dashboard/ProviderGridCard.tsx";
+import { AddProviderButton } from "@/components/dashboard/AddProviderButton.tsx";
+import { SectionTitle, ToastProvider } from "@/components/dashboard/ui.tsx";
+import type { Provider } from "@/lib/db/types.ts";
+
+const CATEGORY_LABEL: Record<string, string> = {
+  oauth: "OAuth Providers",
+  apikey: "API Key Providers",
+  compatible: "Compatible Providers",
+  local: "Local Providers",
+};
+
+// Rendered in this fixed order; a category with zero providers is skipped entirely
+// rather than shown as a permanent empty section.
+const CATEGORY_ORDER = ["oauth", "apikey", "compatible", "local"];
+
+const DEFAULT_ICON = "cable";
+const DEFAULT_COLOR = "#8B8B93";
+
+function iconFor(provider: Provider): { icon: string; color: string } {
+  const entry = getCatalogProvider(provider.id);
+  return { icon: entry?.icon ?? DEFAULT_ICON, color: entry?.color ?? DEFAULT_COLOR };
+}
 
 export default function ModelsPage() {
-  const models = listModels();
   const providers = listProviders();
+  const byCategory = new Map<string, Provider[]>();
+  for (const p of providers) {
+    const category = categoryForProvider(p.id);
+    if (!byCategory.has(category)) byCategory.set(category, []);
+    byCategory.get(category)!.push(p);
+  }
+
+  const connectedProviderCount = providers.filter((p) => listConnections(p.id).length > 0).length;
+
   return (
-    <div className="flex max-w-5xl flex-col gap-4">
-      <div>
-        <h1 className="text-lg font-semibold text-text-main">Models</h1>
-        <p className="mt-0.5 text-xs text-text-muted">
-          Models are scoped to the provider that serves them. Request a model as{" "}
-          <code className="rounded bg-bg-subtle px-1 py-0.5">prefix/nativeId</code> (e.g.{" "}
-          <code className="rounded bg-bg-subtle px-1 py-0.5">or/gpt-5.6-sol</code>) so it routes only
-          to that provider. Use <strong>Import from provider</strong> to pull a provider&apos;s live
-          model list.
-        </p>
+    <ToastProvider>
+      <div className="flex max-w-6xl flex-col gap-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-semibold text-text-main">Models</h1>
+            <p className="text-xs text-text-muted">
+              {connectedProviderCount}/{providers.length} providers configured · click a provider
+              to manage its connections and models
+            </p>
+          </div>
+          <AddProviderButton existingIds={providers.map((p) => p.id)} />
+        </div>
+
+        {CATEGORY_ORDER.filter((c) => byCategory.has(c)).map((category) => {
+          const entries = byCategory.get(category)!;
+          const configured = entries.filter((p) => listConnections(p.id).length > 0).length;
+          return (
+            <section key={category} className="flex flex-col gap-3">
+              <div className="flex items-baseline gap-2">
+                <SectionTitle>{CATEGORY_LABEL[category] ?? category}</SectionTitle>
+                <span className="text-[11px] text-text-muted">
+                  {configured}/{entries.length}
+                </span>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {entries.map((p) => {
+                  const { icon, color } = iconFor(p);
+                  return (
+                    <ProviderGridCard
+                      key={p.id}
+                      provider={p}
+                      connections={listConnections(p.id)}
+                      icon={icon}
+                      color={color}
+                    />
+                  );
+                })}
+              </div>
+            </section>
+          );
+        })}
       </div>
-      <ModelsManager initialModels={models} providers={providers} />
-    </div>
+    </ToastProvider>
   );
 }

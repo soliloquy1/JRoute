@@ -51,3 +51,16 @@ export function getCatalogByCategory() {
   }
   return by;
 }
+
+/**
+ * Display category for a REAL `providers` table row (not a catalog entry) — drives the
+ * /models page's section grouping. Every catalog provider auto-seeds into `providers`
+ * at boot, so this covers both catalog rows and operator-added custom rows: a curated
+ * catalog id resolves to its real category (oauth/apikey/local); anything else is an
+ * operator-added custom provider (via "Add compatible provider") not in the curated
+ * catalog at all — "compatible" by construction, not a guess.
+ */
+export function categoryForProvider(providerId: string): "oauth" | "apikey" | "compatible" | "local" {
+  const catalogEntry = getCatalogProvider(providerId);
+  return catalogEntry ? catalogEntry.category : "compatible";
+}
