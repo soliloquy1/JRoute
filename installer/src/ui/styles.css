@@ -1,23 +1,43 @@
+/* Dashboard dark-mode tokens, ported 1:1 from src/app/globals.css's `.dark` block so the
+   installer reads as the same product as the app it's about to launch — not a separate,
+   default-Electron-scaffold-looking tool. Kept dark-only for now (the installer has never
+   had a light mode); if the app's light mode becomes relevant here, mirror the `:root`
+   block from globals.css too. */
 :root {
-  --bg: #0e1117;
-  --panel: #161b22;
-  --panel-2: #1c2230;
-  --border: #2a3140;
-  --text: #e6edf3;
-  --muted: #8b949e;
-  --accent: #a855f7;
-  --accent-2: #7c3aed;
-  --green: #3fb950;
-  --red: #f85149;
+  --bg: oklch(0.2679 0.0036 106.64); /* warm charcoal — page */
+  --panel: oklch(0.2357 0.0024 67.71); /* sidebar — recessed */
+  --panel-2: oklch(0.35 0.005 106.8); /* inset fields, hover washes */
+  --card: oklch(0.3085 0.0035 106.6); /* raised surface */
+  --border: oklch(0.395 0.009 106.9);
+  --border-strong: oklch(0.46 0.011 100.2); /* inputs at rest */
+
+  --text: oklch(0.9211 0.004 106.48);
+  --muted: oklch(0.7 0.012 99);
+
+  --accent: oklch(0.705 0.124 41.5); /* Claude terracotta */
+  --accent-hover: oklch(0.75 0.117 42.5);
+  --accent-soft: oklch(0.705 0.124 41.5 / 0.14);
+
+  --success: oklch(0.72 0.13 158);
+  --error: oklch(0.68 0.19 25.5);
+
+  --shadow-soft: 0 1px 2px oklch(0 0 0 / 0.25);
+
+  --radius-card: 10px;
+  --radius-control: 7px;
+
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
 }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
   background: var(--bg);
   color: var(--text);
   font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
 }
 #app { height: 100vh; }
 .view { display: flex; height: 100vh; }
@@ -25,88 +45,199 @@ body {
 #manager { flex-direction: column; }
 .hidden { display: none !important; }
 
+::selection {
+  background-color: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: 4px;
+}
+:focus:not(:focus-visible) { outline: none; box-shadow: none; }
+
 /* ---- Sidebar ---- */
 .sidebar {
   width: 230px;
   background: var(--panel);
   border-right: 1px solid var(--border);
-  padding: 22px 18px;
+  padding: 20px 14px;
   display: flex;
   flex-direction: column;
 }
-.brand { font-size: 20px; font-weight: 700; display: flex; align-items: center; gap: 10px; margin-bottom: 26px; }
+.brand {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 22px;
+  padding: 0 6px;
+}
 .logo {
-  display: inline-grid; place-items: center;
-  width: 30px; height: 30px; border-radius: 8px;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  color: #fff; font-weight: 800;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--bg);
+  font-weight: 600;
+  font-size: 13px;
 }
 #steps { list-style: none; padding: 0; margin: 0; flex: 1; }
 #steps li {
-  padding: 9px 12px; border-radius: 8px; color: var(--muted);
-  margin-bottom: 4px; font-size: 13px;
+  position: relative;
+  padding: 7px 10px 7px 22px;
+  border-radius: var(--radius-control);
+  color: var(--muted);
+  margin-bottom: 2px;
+  font-size: 13px;
+  transition: background-color 0.15s, color 0.15s;
 }
-#steps li.active { background: var(--panel-2); color: var(--text); font-weight: 600; }
-#steps li.done { color: var(--green); }
-.foot { color: var(--muted); font-size: 11px; margin-top: 10px; }
+#steps li.active {
+  background: var(--panel-2);
+  color: var(--text);
+  font-weight: 600;
+}
+/* A completed step gets a small filled dot instead of a wall of colored text — the
+   dashboard's own nav never recolors a whole label, only the icon accents. */
+#steps li.done { color: var(--muted); }
+#steps li.done::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--success);
+}
+.foot { color: var(--muted); font-size: 11px; margin-top: 10px; padding: 0 6px; }
 
 /* ---- Content ---- */
 .content { flex: 1; padding: 40px 48px; overflow-y: auto; }
-.panel h1 { font-size: 24px; margin: 0 0 14px; }
+.panel h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 14px; color: var(--text); }
 .panel p { line-height: 1.6; color: var(--text); }
 .muted { color: var(--muted); font-size: 13px; }
-.muted code, .panel code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+.muted code, .panel code {
+  background: var(--panel-2);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+}
 
-.field { display: block; margin: 18px 0; }
-.field > span { display: block; margin-bottom: 7px; font-weight: 600; }
-.field input[type="text"], .field input[type="number"], .field input[type="password"], .field select {
-  width: 100%; padding: 10px 12px; background: var(--panel);
-  border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 14px;
+.field { display: block; margin: 16px 0; }
+.field > span { display: block; margin-bottom: 6px; font-weight: 500; font-size: 13px; color: var(--text); }
+.field input[type="text"],
+.field input[type="number"],
+.field input[type="password"],
+.field select {
+  width: 100%;
+  padding: 8px 11px;
+  background: var(--card);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  transition: border-color 0.15s;
 }
 .field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
-.row { display: flex; gap: 10px; }
+.field select option { background-color: var(--card); color: var(--text); }
+.row { display: flex; gap: 8px; }
 .row input { flex: 1; }
-.check { display: flex; align-items: center; gap: 9px; margin: 12px 0; color: var(--text); }
+.check { display: flex; align-items: center; gap: 8px; margin: 10px 0; color: var(--text); font-size: 13px; }
+.check input { accent-color: var(--accent); }
 
-.actions { display: flex; gap: 12px; margin-top: 26px; }
+.actions { display: flex; gap: 10px; margin-top: 24px; }
 .actions.end { justify-content: flex-end; }
 
 button {
-  font: inherit; cursor: pointer; border-radius: 8px; padding: 10px 18px;
-  border: 1px solid transparent; font-weight: 600;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: var(--radius-control);
+  padding: 8px 16px;
+  border: 1px solid transparent;
+  font-weight: 500;
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s;
 }
-button.primary { background: var(--accent); color: #fff; }
-button.primary:hover { background: var(--accent-2); }
+button.primary { background: var(--accent); color: var(--bg); }
+button.primary:hover { background: var(--accent-hover); }
 button.secondary { background: var(--panel-2); color: var(--text); border-color: var(--border); }
+button.secondary:hover { background: var(--border); }
 button.ghost { background: transparent; color: var(--muted); border-color: var(--border); }
-button.ghost:hover { color: var(--text); }
-button.danger { color: var(--red); border-color: var(--red); }
+button.ghost:hover { color: var(--text); background: var(--panel-2); }
+button.danger { color: var(--error); border-color: var(--error); }
+button.danger:hover { background: color-mix(in srgb, var(--error) 12%, transparent); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .log {
-  background: #0a0d12; border: 1px solid var(--border); border-radius: 8px;
-  padding: 14px; height: 320px; overflow-y: auto; font-family: ui-monospace, Menlo, monospace;
-  font-size: 12px; white-space: pre-wrap; color: #c9d1d9; margin-top: 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: 14px;
+  height: 320px;
+  overflow-y: auto;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  color: var(--muted);
+  margin-top: 14px;
 }
-.urlbox { margin: 18px 0; }
-.urlbox code { font-size: 16px; background: var(--panel-2); padding: 10px 14px; border-radius: 8px; }
+.urlbox { margin: 16px 0; }
+.urlbox code {
+  font-size: 15px;
+  background: var(--panel-2);
+  padding: 9px 13px;
+  border-radius: var(--radius-control);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  color: var(--text);
+}
 
 /* ---- Manager ---- */
 .bar {
-  width: 100%; height: 56px; background: var(--panel); border-bottom: 1px solid var(--border);
-  display: flex; align-items: center; justify-content: space-between; padding: 0 20px;
+  width: 100%;
+  height: 52px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 18px;
 }
-.pill { padding: 5px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; }
-.pill.on { background: rgba(63,185,80,.15); color: var(--green); }
-.pill.off { background: rgba(248,81,73,.12); color: var(--red); }
-.mgr { flex: 1; padding: 30px; overflow-y: auto; }
+.pill {
+  padding: 4px 11px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.pill.on { background: color-mix(in srgb, var(--success) 16%, transparent); color: var(--success); }
+.pill.off { background: color-mix(in srgb, var(--error) 14%, transparent); color: var(--error); }
+.mgr { flex: 1; padding: 28px; overflow-y: auto; }
 .card {
-  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
-  padding: 18px 22px; max-width: 560px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-soft);
+  padding: 16px 20px;
+  max-width: 560px;
 }
-.kv { display: flex; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid var(--border); }
+.kv { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
 .kv:last-child { border-bottom: none; }
 .kv span { color: var(--muted); }
+.kv b { color: var(--text); font-weight: 500; }
 .kv a { color: var(--accent); text-decoration: none; }
-.mgr-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 22px; max-width: 560px; }
-#updateProgress { margin-top: 16px; }
+.kv a:hover { text-decoration: underline; }
+.mgr-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; max-width: 560px; }
+#updateProgress { margin-top: 14px; }
+
+/* Thin, quiet scrollbars — matches the app's globals.css treatment */
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background-color: color-mix(in srgb, var(--muted) 35%, transparent); border-radius: 999px; }
+*::-webkit-scrollbar-thumb:hover { background-color: color-mix(in srgb, var(--muted) 55%, transparent); }
+* { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--muted) 35%, transparent) transparent; }
