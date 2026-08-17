@@ -6,9 +6,37 @@ JRoute exposes an OpenAI-compatible endpoint that Janitor's frontend calls direc
 forwards requests to whichever LLM provider you configure, and adds three things Janitor
 cannot do on its own:
 
-This README is not complete. Use [this](https://soliloquy.gitbook.io/jroute) instead. 
+- **Multi-provider routing with automatic fallback** — connect any number of API-key or
+  OAuth-based providers. JRoute fails over between them automatically when one is rate
+  limited, over quota, or down, with a configurable fallback strategy and per-connection
+  quota tracking.
+- **A prompt pipeline JanitorAI doesn't have** — SillyTavern-style rich presets (full
+  Prompt Manager import, sampler overrides, macros), lorebooks, logit bias presets, regex
+  find/replace presets (applied to both the outgoing message and the streaming reply,
+  without breaking the stream), and reasoning-tag stripping (hides a model's
+  `<think>...</think>`-style internal planning text from the final reply — even when the
+  model never emits the opening tag).
+- **Operational visibility** — a dashboard for managing keys, connections, and presets,
+  plus per-provider usage analytics, so you can see what's actually happening across every
+  connection instead of guessing from Janitor's own error messages.
 
-> **Status: under construction.**
+For the full setup guide, see [the docs](https://soliloquy.gitbook.io/jroute).
+
+## Installing
+
+The easiest way to get started is the [one-click installer](https://github.com/soliloquy1/JRoute/releases)
+(Windows, macOS, Linux) — it downloads a pinned Node.js runtime, builds JRoute, and runs it
+locally, with no manual setup. Point Janitor's custom endpoint at the local address it
+gives you and you're done.
+
+To run from source instead:
+
+```bash
+git clone https://github.com/soliloquy1/JRoute.git
+cd JRoute
+npm install
+npm run dev
+```
 
 ## Why a fork
 
