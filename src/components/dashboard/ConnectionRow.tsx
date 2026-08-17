@@ -5,6 +5,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Connection } from "@/lib/db/types.ts";
 import type { ConnectionQuotaInfo } from "./ConnectionList.tsx";
+import { extractApiErrorMessage } from "./apiErrorMessage.ts";
 
 export function ConnectionRow({
   connection,
@@ -37,9 +38,14 @@ export function ConnectionRow({
     setTestResult(null);
     setError(null);
     const res = await fetch(`/api/connections/${connection.id}/test`, { method: "POST" });
-    const body = (await res.json()) as { ok: boolean; error: string | null };
+    const body = await res.json().catch(() => null);
     setTesting(false);
-    setTestResult(body.ok ? "OK" : (body.error ?? "Failed"));
+    // A successful test call (200) sends {ok,error} from testConnection() — `error` is a
+    // bare string there. An unauthenticated/invalid-id/crashed request (401/400/500)
+    // instead goes through jsonError(), whose `error` is an OBJECT ({message,type,code}) —
+    // extractApiErrorMessage() handles both shapes so a non-200 response can't hand a raw
+    // object to setTestResult (React error #31, same class as ModelManager's import bug).
+    setTestResult(res.ok && (body as { ok?: boolean } | null)?.ok ? "OK" : extractApiErrorMessage(body, "Failed"));
     router.refresh();
   }
 

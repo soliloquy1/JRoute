@@ -6,6 +6,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Connection, Provider } from "@/lib/db/types.ts";
 import { useToast } from "./ui.tsx";
+import { extractApiErrorMessage } from "./apiErrorMessage.ts";
 
 function isConnectionHealthy(connection: Connection, now: number): boolean {
   return (
@@ -61,8 +62,16 @@ export function ProviderGridCard({
     setTesting(true);
     try {
       const res = await fetch(`/api/connections/${primary.id}/test`, { method: "POST" });
-      const body = (await res.json().catch(() => null)) as { ok: boolean; error: string | null } | null;
-      toast(body?.ok ? `${provider.name}: OK` : `${provider.name}: ${body?.error ?? "Failed"}`, body?.ok ? "ok" : "error");
+      const body = await res.json().catch(() => null);
+      // A non-200 response (401/400/500) sends jsonError()'s { error: { message,... } }
+      // shape, not testConnection()'s { ok, error: string } — without res.ok gating this,
+      // template-literal-stringifying the raw object into the toast text used to render
+      // "[object Object]" instead of the real message.
+      const ok = res.ok && Boolean((body as { ok?: boolean } | null)?.ok);
+      toast(
+        ok ? `${provider.name}: OK` : `${provider.name}: ${extractApiErrorMessage(body, "Failed")}`,
+        ok ? "ok" : "error"
+      );
       router.refresh();
     } finally {
       setTesting(false);
