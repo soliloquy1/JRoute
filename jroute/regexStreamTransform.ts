@@ -152,15 +152,23 @@ export function wrapWithRegexTransform(
               })()
             : tryAdvanceCommit(state, scripts, ctx);
 
-          // Pure hold-back (nothing committed yet, no finish_reason on this frame): skip
-          // the frame entirely rather than sending a content:"" chunk the upstream never
-          // produced — the client ends up with exactly the deltas it would have gotten
-          // unwrapped, just batched differently.
-          if (emitted.length > 0 || choice.finish_reason != null) {
-            const outParsed = {
-              ...parsed,
-              choices: [{ ...choice, delta: { ...delta, content: emitted } }],
-            };
+          // Pure hold-back with no other reason to emit (no finish_reason, no sibling
+          // delta field like `role`): skip the frame entirely rather than sending a
+          // content:"" chunk the upstream never produced. A sibling field MUST still
+          // reach the client even while content itself is held back — Gemini in
+          // particular bundles `role: "assistant"` into the very first content-bearing
+          // delta rather than sending it as its own frame, so dropping the whole frame
+          // here would silently drop the role announcement for any stream whose first
+          // tokens get held back.
+          const hasOtherDeltaFields = Object.keys(delta).some((k) => k !== "content");
+          if (emitted.length > 0 || choice.finish_reason != null || hasOtherDeltaFields) {
+            const outDelta: Record<string, unknown> = { ...delta };
+            if (emitted.length > 0) {
+              outDelta.content = emitted;
+            } else {
+              delete outDelta.content;
+            }
+            const outParsed = { ...parsed, choices: [{ ...choice, delta: outDelta }] };
             controller.enqueue(encoder.encode(`data: ${JSON.stringify(outParsed)}\n\n`));
           }
 

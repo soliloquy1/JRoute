@@ -130,3 +130,29 @@ test("wrapWithReasoningTransform: finish_reason frame immediately followed by [D
   const deltas = await collectDeltas(out);
   assert.equal(deltas.join(""), "hi");
 });
+
+test("wrapWithReasoningTransform: a sibling delta field (e.g. role) is not dropped while content is held back", async () => {
+  // Gemini bundles role:"assistant" into the very first content-bearing delta rather than
+  // sending it as its own frame — dropping the whole frame during hold-back would silently
+  // drop the role announcement. expectImplicitOpen:true forces "detecting" so content is
+  // genuinely held back on this first frame.
+  const p = pair({ expectImplicitOpen: true });
+  const payload = {
+    id: "c1",
+    object: "chat.completion.chunk",
+    created: 1,
+    model: "m",
+    choices: [{ index: 0, delta: { role: "assistant", content: "plain text" }, finish_reason: null }],
+  };
+  const input = byteStream([`data: ${JSON.stringify(payload)}\n\n`]); // stream just closes
+  const out = wrapWithReasoningTransform(input, [p], "reqRole");
+  const reader = out.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+  }
+  assert.match(buffer, /"role":"assistant"/);
+});

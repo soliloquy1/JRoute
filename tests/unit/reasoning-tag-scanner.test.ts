@@ -39,6 +39,22 @@ test("applyReasoningTagStrip: a block exceeding the memory cap is still fully st
   assert.equal(applyReasoningTagStrip(text, [p]), "final answer");
 });
 
+test("scanner: implicit reasoning exceeding the memory cap before any close tag leaks its prefix exactly at the cap (documented tradeoff, not a bug)", () => {
+  // Spec Known Limitation #2: "detecting" cannot tell a long implicit-reasoning block
+  // apart from a normal reply without a bound — hitting the cap resolves in favor of
+  // "normal reply", flushing what was buffered so far. This must be bounded at exactly
+  // what was pushed (never more), and the eventual close tag must still be stripped once
+  // it arrives, now handled by "outside" rather than being lost.
+  const p = pair({ expectImplicitOpen: true });
+  const scanner = createReasoningScanner([p]);
+  const longImplicit = "y".repeat(25000); // no close tag yet -> cap fires mid-call
+  const firstPush = scanner.push(longImplicit);
+  assert.equal(firstPush, longImplicit);
+  const rest = scanner.push("</think> real reply");
+  const out = firstPush + rest + scanner.finish();
+  assert.equal(out, `${longImplicit} real reply`);
+});
+
 test("applyReasoningTagStrip: truncation (no close tag ever) discards the whole open block", () => {
   const p = pair({});
   assert.equal(applyReasoningTagStrip("before <think>never closes", [p]), "before ");

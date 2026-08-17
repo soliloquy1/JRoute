@@ -69,11 +69,18 @@ export function wrapWithReasoningTransform(
           }
 
           const emitted = scanner.push(delta.content);
-          if (emitted.length > 0) {
-            const outParsed = {
-              ...parsed,
-              choices: [{ ...choice, delta: { ...delta, content: emitted } }],
-            };
+          // See regexStreamTransform.ts's identical fix: a sibling delta field (e.g.
+          // Gemini's role: "assistant" bundled into the first content-bearing delta) must
+          // still reach the client even while content itself is held back by detection.
+          const hasOtherDeltaFields = Object.keys(delta).some((k) => k !== "content");
+          if (emitted.length > 0 || hasOtherDeltaFields) {
+            const outDelta: Record<string, unknown> = { ...delta };
+            if (emitted.length > 0) {
+              outDelta.content = emitted;
+            } else {
+              delete outDelta.content;
+            }
+            const outParsed = { ...parsed, choices: [{ ...choice, delta: outDelta }] };
             controller.enqueue(encoder.encode(`data: ${JSON.stringify(outParsed)}\n\n`));
           }
 

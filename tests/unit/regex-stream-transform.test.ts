@@ -155,3 +155,28 @@ test("wrapWithRegexTransform: a pure hold-back frame (nothing committed yet, no 
   assert.equal(dataFrames.length, 1);
   assert.match(dataFrames[0], /"content":"hi"/);
 });
+
+test("wrapWithRegexTransform: a sibling delta field (e.g. role) is not dropped while content is held back", async () => {
+  // Gemini bundles role:"assistant" into the very first content-bearing delta rather than
+  // sending it as its own frame — dropping the whole frame during hold-back would silently
+  // drop the role announcement.
+  const s = script({ findRegex: "/zzz/", replaceString: "q" }); // never matches
+  const payload = {
+    id: "c1",
+    object: "chat.completion.chunk",
+    created: 1,
+    model: "m",
+    choices: [{ index: 0, delta: { role: "assistant", content: "hi" }, finish_reason: null }],
+  };
+  const input = byteStream([`data: ${JSON.stringify(payload)}\n\n`]); // stream just closes
+  const out = wrapWithRegexTransform(input, [s], CTX, "reqRole");
+  const reader = out.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+  }
+  assert.match(buffer, /"role":"assistant"/);
+});
