@@ -4,6 +4,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { PrimaryButton, GhostButton, InlineError, StatusDot, useToast } from "./ui.tsx";
+import { extractApiErrorMessage } from "./apiErrorMessage.ts";
 
 export interface ModelRowData {
   providerId: string;
@@ -37,8 +38,8 @@ export function ModelManager({ providerId, models }: { providerId: string; model
     );
     setBusy(null);
     if (!res.ok) {
-      const b = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
-      const msg = b?.error?.message ?? "Failed to update model";
+      const b = await res.json().catch(() => null);
+      const msg = extractApiErrorMessage(b, "Failed to update model");
       setError(msg);
       toast(msg, "error");
       return;
@@ -72,8 +73,8 @@ export function ModelManager({ providerId, models }: { providerId: string; model
     });
     setImporting(false);
     if (!res.ok) {
-      const b = (await res.json().catch(() => null)) as { error?: string } | null;
-      const msg = b?.error ?? "Import failed";
+      const b = await res.json().catch(() => null);
+      const msg = extractApiErrorMessage(b, "Import failed");
       setError(msg);
       toast(msg, "error");
       return;
