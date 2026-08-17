@@ -1,6 +1,7 @@
 import type { RichPresetJson } from "../prompts/stPresetSchema.ts";
 import type { LogitBiasEntry } from "../prompts/logitBiasSchema.ts";
 import type { RegexScript } from "../prompts/regexScriptSchema.ts";
+import type { ReasoningTagPair } from "../prompts/reasoningTagSchema.ts";
 
 export type WireFormat = "openai" | "anthropic" | "gemini";
 export type ProviderKind = "apikey" | "oauth";
@@ -87,9 +88,7 @@ export interface RichPreset {
   userName: string;
   createdAt: number;
   lorebookIds: number[];
-  // Inline shape pending Task 2 (reasoningTagSchema.ts): the real `ReasoningTagPair`
-  // import lands there and is swapped in once the schema module exists.
-  reasoningTags: Array<{ openTag: string; closeTag: string; expectImplicitOpen: boolean }>;
+  reasoningTags: ReasoningTagPair[];
 }
 
 export interface LogitBiasPreset {
