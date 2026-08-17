@@ -87,6 +87,9 @@ export interface RichPreset {
   userName: string;
   createdAt: number;
   lorebookIds: number[];
+  // Inline shape pending Task 2 (reasoningTagSchema.ts): the real `ReasoningTagPair`
+  // import lands there and is swapped in once the schema module exists.
+  reasoningTags: Array<{ openTag: string; closeTag: string; expectImplicitOpen: boolean }>;
 }
 
 export interface LogitBiasPreset {
