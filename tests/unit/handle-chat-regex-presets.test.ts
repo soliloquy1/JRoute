@@ -116,3 +116,29 @@ test("handleChat skips the user-input transform entirely when the key has no reg
   const messages = capturedBody!.messages as Array<{ role: string; content: string }>;
   assert.equal(messages[0].content, "the secret word");
 });
+
+test("handleChat applies a regex preset to the assistant message content for a non-streaming response", async () => {
+  createConnection("openai", "primary", "sk-test");
+  const presetId = createRegexPreset("Upper", [
+    s({ scriptName: "s", findRegex: "/hello/", replaceString: "HI", placement: [2] }),
+  ]);
+  const issued = issueApiKey("janitor-out");
+  setApiKeyRegexPreset(issued.id, presetId);
+  const apiKey = verifyApiKey(issued.secret);
+  const fetchImpl: typeof fetch = async () =>
+    new Response(
+      JSON.stringify({
+        id: "x",
+        choices: [{ message: { role: "assistant", content: "hello there" } }],
+        usage: {},
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+  const res = await handleChat(
+    post({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }] }),
+    apiKey!,
+    { fetchImpl }
+  );
+  const body = (await res.json()) as { choices: Array<{ message: { content: string } }> };
+  assert.equal(body.choices[0].message.content, "HI there");
+});

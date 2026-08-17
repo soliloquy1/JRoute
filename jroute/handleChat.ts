@@ -553,6 +553,18 @@ export async function handleChat(
   const outJson = responseConverter
     ? responseConverter.convertResponse(result.json, requestedModel)
     : result.json;
+  if (hasActiveScripts(regexScripts, 2)) {
+    const msg = (outJson as { choices?: Array<{ message?: { content?: unknown } }> } | null)
+      ?.choices?.[0]?.message;
+    if (msg) {
+      msg.content = applyRegexScriptsToContent(msg.content, regexScripts, 2, regexMacroCtx);
+      debugLog("regex.aiOutputApplied", {
+        requestId,
+        regexPresetId: key.regexPresetId,
+        stream: false,
+      });
+    }
+  }
   const usage = (outJson as { usage?: UpstreamUsage } | null)?.usage;
   // Phase 3/4: fold the token usage into the rolling quota window now that we know it.
   try {
