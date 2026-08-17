@@ -4,6 +4,7 @@ import { listConnections } from "@/lib/db/connections.ts";
 import { categoryForProvider, getCatalogProvider } from "@/lib/catalog/index.ts";
 import { ProviderGridCard } from "@/components/dashboard/ProviderGridCard.tsx";
 import { AddProviderButton } from "@/components/dashboard/AddProviderButton.tsx";
+import { AddFromCatalogButton } from "@/components/dashboard/AddFromCatalogButton.tsx";
 import { SectionTitle, ToastProvider } from "@/components/dashboard/ui.tsx";
 import type { Provider } from "@/lib/db/types.ts";
 
@@ -48,7 +49,10 @@ export default function ModelsPage() {
               to manage its connections and models
             </p>
           </div>
-          <AddProviderButton existingIds={providers.map((p) => p.id)} />
+          <div className="flex items-center gap-2">
+            <AddFromCatalogButton existingIds={providers.map((p) => p.id)} />
+            <AddProviderButton existingIds={providers.map((p) => p.id)} />
+          </div>
         </div>
 
         {CATEGORY_ORDER.filter((c) => byCategory.has(c)).map((category) => {

@@ -43,3 +43,28 @@ test("models page groups configured providers by category and exposes add/test a
   resetDb();
   rmSync(dir, { recursive: true, force: true });
 });
+
+test("models page offers to re-add a deleted catalog provider, and hides that button once every catalog id is present", async () => {
+  const dir2 = mkdtempSync(join(tmpdir(), "jroute-pp2-"));
+  process.env.DATA_DIR = dir2;
+
+  const { resetDb, getDb } = await import("../../src/lib/db/bootstrap.ts");
+  const { seedCatalogProviders, deleteProvider } = await import("../../src/lib/db/providers.ts");
+  seedCatalogProviders();
+  deleteProvider("claude");
+
+  const { default: ModelsPage } = await import("../../src/app/(dashboard)/models/page.tsx");
+  const withGap = renderToStaticMarkup(React.createElement(ModelsPage));
+  assert.ok(withGap.includes("From catalog"), "must offer to re-add a deleted catalog provider");
+
+  getDb().prepare("DELETE FROM deleted_catalog_provider_ids WHERE provider_id = 'claude'").run();
+  seedCatalogProviders();
+  const withoutGap = renderToStaticMarkup(React.createElement(ModelsPage));
+  assert.ok(
+    !withoutGap.includes("From catalog"),
+    "must not show the re-add affordance once every catalog id is present"
+  );
+
+  resetDb();
+  rmSync(dir2, { recursive: true, force: true });
+});
