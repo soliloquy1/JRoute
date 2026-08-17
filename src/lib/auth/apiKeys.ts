@@ -10,6 +10,7 @@ interface ApiKeyRow {
   preset_id: number | null;
   rich_preset_id: number | null;
   logit_bias_preset_id: number | null;
+  regex_preset_id: number | null;
   tool_mode: string;
   rate_limit_per_min: number;
   created_at: number;
@@ -29,6 +30,7 @@ function toRecord(row: ApiKeyRow): ApiKeyRecord {
     presetId: row.preset_id,
     richPresetId: row.rich_preset_id,
     logitBiasPresetId: row.logit_bias_preset_id,
+    regexPresetId: row.regex_preset_id,
     toolMode: row.tool_mode as ToolMode,
     rateLimitPerMin: row.rate_limit_per_min,
     createdAt: row.created_at,
