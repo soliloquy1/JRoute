@@ -119,7 +119,16 @@ const nextConfig = {
   async rewrites() {
     return [
       { source: "/chat/completions", destination: "/api/v1/chat/completions" },
-      { source: "/models", destination: "/api/v1/models" },
+      // The bare-domain "/models" -> "/api/v1/models" alias (for OpenAI-SDK-style
+      // clients that point base_url at the server root without "/v1") was removed: it
+      // permanently collided with the dashboard's own /models page at the same path,
+      // and a rewrite `has` header condition can't disambiguate the two — Next's
+      // rewrite matcher compiles `has.value` through path-to-regexp, not a full JS
+      // regex engine, so a negative-lookahead condition (tried and verified broken
+      // directly against the built standalone server) silently never matches, which
+      // let the dashboard page through but silently killed the API alias instead.
+      // Standard OpenAI SDK configs point base_url at .../v1 anyway (still served by
+      // the rule below); only clients that skip that convention lose the shortcut.
       { source: "/v1/:path*", destination: "/api/v1/:path*" },
       { source: "/v1", destination: "/api/v1" },
     ];
