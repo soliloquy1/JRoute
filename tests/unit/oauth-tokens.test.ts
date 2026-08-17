@@ -82,26 +82,75 @@ test("deleteOAuthToken removes the row", () => {
   assert.equal(getOAuthToken("xai-oauth", 2), null);
 });
 
-test("isTokenValid: null token is invalid; non-expired is valid; expired is invalid", () => {
+test("isTokenValid: null token is invalid; non-expired is valid; well-expired is invalid", () => {
   assert.equal(isTokenValid(null), false);
   const now = Date.now();
   assert.equal(
-    isTokenValid({ provider: "p", connectionId: 1, accessToken: "a", refreshToken: null, expiresAt: null }, now),
+    isTokenValid(
+      { provider: "p", connectionId: 1, accessToken: "a", refreshToken: null, expiresAt: null, credentialDecryptFailed: false },
+      now
+    ),
     true
   );
   assert.equal(
     isTokenValid(
-      { provider: "p", connectionId: 1, accessToken: "a", refreshToken: null, expiresAt: now - 1000 },
+      { provider: "p", connectionId: 1, accessToken: "a", refreshToken: null, expiresAt: now + 60_000, credentialDecryptFailed: false },
+      now
+    ),
+    true
+  );
+  // Well past the 5-minute clock-skew margin: invalid.
+  assert.equal(
+    isTokenValid(
+      { provider: "p", connectionId: 1, accessToken: "a", refreshToken: null, expiresAt: now - 400_000, credentialDecryptFailed: false },
       now
     ),
     false
   );
-  // Within the 5-minute skew window counts as still valid.
+  // A decrypt-failed row is never valid, even with a future expiresAt.
   assert.equal(
     isTokenValid(
-      { provider: "p", connectionId: 1, accessToken: "a", refreshToken: null, expiresAt: now + 60_000 },
+      { provider: "p", connectionId: 1, accessToken: "a", refreshToken: null, expiresAt: now + 60_000, credentialDecryptFailed: true },
+      now
+    ),
+    false
+  );
+});
+
+test("isTokenValid: clock-skew margin tolerates a token expired up to 5 minutes ago", () => {
+  const now = Date.now();
+  // Expired 1 minute ago — within the 5-minute skew margin, still usable.
+  assert.equal(
+    isTokenValid(
+      { provider: "p", connectionId: 1, accessToken: "a", refreshToken: null, expiresAt: now - 60_000, credentialDecryptFailed: false },
       now
     ),
     true
   );
+  // Expired ~6.6 minutes ago — outside the margin, invalid.
+  assert.equal(
+    isTokenValid(
+      { provider: "p", connectionId: 1, accessToken: "a", refreshToken: null, expiresAt: now - 400_000, credentialDecryptFailed: false },
+      now
+    ),
+    false
+  );
+});
+
+test("getOAuthToken: a ciphertext that fails to decrypt is flagged, not silently null (#6148 class)", () => {
+  upsertOAuthToken({ provider: "claude", connectionId: 1, accessToken: "will-corrupt", refreshToken: null, expiresAt: null });
+  const raw = getDb()
+    .prepare("SELECT access_token FROM oauth_tokens WHERE provider = 'claude' AND connection_id = 1")
+    .get() as { access_token: string };
+  // Corrupt the ciphertext body while keeping the enc:v1: prefix, so looksEncrypted()
+  // is still true but decrypt() fails (simulates a rotated STORAGE_ENCRYPTION_KEY).
+  const corrupted = raw.access_token.slice(0, -4) + "beef";
+  getDb()
+    .prepare("UPDATE oauth_tokens SET access_token = ? WHERE provider = 'claude' AND connection_id = 1")
+    .run(corrupted);
+
+  const row = getOAuthToken("claude", 1);
+  assert.equal(row?.accessToken, null);
+  assert.equal(row?.credentialDecryptFailed, true);
+  assert.equal(isTokenValid(row), false);
 });

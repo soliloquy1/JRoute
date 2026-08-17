@@ -53,7 +53,12 @@ export function ProviderCard({ provider }: { provider: Provider }) {
           items={connections.map((c) => ({ connection: c, healthy: isConnectionHealthy(c) }))}
         />
         <div className="mt-2">
-          <AddConnectionButton providerId={provider.id} providerName={provider.name} />
+          <AddConnectionButton
+            providerId={provider.id}
+            providerName={provider.name}
+            providerKind={provider.kind}
+            oauthProviderKey={provider.oauthProvider}
+          />
         </div>
       </ToastProvider>
     </section>

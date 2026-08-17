@@ -5,6 +5,8 @@ import { listConnections, markCooldown, clearCooldown } from "../src/lib/db/conn
 import { logUsage } from "../src/lib/db/usageLogs.ts";
 import { recordUsage, parseQuotaThresholds } from "../src/lib/db/quotaWindows.ts";
 import { getOAuthToken, isTokenValid } from "../src/lib/db/oauthTokens.ts";
+import { oauthTokenKey } from "../src/lib/oauth/tokenKey.ts";
+import { refreshOAuthToken } from "../src/lib/oauth/refresh.ts";
 import { eligibleConnections } from "./selectConnection.ts";
 import { execute, cooldownMsFor } from "./executor.ts";
 import { keepaliveStream, sseHeaders } from "./sse.ts";
@@ -178,7 +180,7 @@ export async function handleChat(
   // token is stored, falling back to the connection's apiKey (or a 401 upstream).
   const tokenResolver = (connectionId: number): string | null => {
     if (provider.kind !== "oauth") return null;
-    const t = getOAuthToken(provider.oauthProvider ?? provider.id, connectionId);
+    const t = getOAuthToken(oauthTokenKey(provider), connectionId);
     return isTokenValid(t) ? (t.accessToken as string) : null;
   };
   // The client may send a prefixed id (`or/gpt-5.6-sol`); the upstream must receive
@@ -257,6 +259,9 @@ export async function handleChat(
   let lastMessage: string | null = null;
   let lastConnectionId: number | null = null;
   let skippedDecryptFailed = false;
+  // Phase 2: at most one refresh-then-retry per connection per request — prevents an
+  // upstream that keeps returning 401 even with a fresh token from looping forever.
+  const oauthRefreshedConnectionIds = new Set<number>();
 
   for (let attempt = 0; attempt < candidates.length; attempt += 1) {
     const connection = candidates[attempt];
@@ -276,6 +281,19 @@ export async function handleChat(
       skippedDecryptFailed = true;
       debugLog("connection.skipped_decrypt_failed", { requestId, connectionId: connection.id });
       continue;
+    }
+
+    // Same skip, for the oauth_tokens ciphertext (bug #6148 class): without this, a
+    // decrypt-failed token silently resolves to null in tokenResolver and the executor
+    // fires with an empty bearer — a blind 401 that looks like a real auth failure
+    // instead of the operator-fixable "STORAGE_ENCRYPTION_KEY changed" cause.
+    if (provider.kind === "oauth") {
+      const tokenRow = getOAuthToken(oauthTokenKey(provider), connection.id);
+      if (tokenRow?.credentialDecryptFailed) {
+        skippedDecryptFailed = true;
+        debugLog("connection.skipped_oauth_decrypt_failed", { requestId, connectionId: connection.id });
+        continue;
+      }
     }
 
     debugLog("upstream.attempt", {
@@ -458,6 +476,36 @@ export async function handleChat(
         status: 200,
         headers: { "content-type": "application/json" },
       });
+    }
+
+    // Phase 2: an oauth connection's 401 usually means the access token expired
+    // between our (skew-tolerant) validity check and the actual dial. Refresh once and
+    // retry the SAME connection before falling over to the next candidate — 429 is
+    // unaffected and keeps using the existing markCooldown path below.
+    if (result.status === 401 && provider.kind === "oauth") {
+      if (!oauthRefreshedConnectionIds.has(connection.id)) {
+        oauthRefreshedConnectionIds.add(connection.id);
+        const refreshed = await refreshOAuthToken(provider, connection.id);
+        if (refreshed) {
+          debugLog("oauth.token_refreshed_retry", { requestId, connectionId: connection.id });
+          attempt -= 1;
+          continue;
+        }
+        debugLog("oauth.refresh_failed", { requestId, connectionId: connection.id });
+      }
+      // Refresh was already attempted (or just failed): this connection's credential
+      // is bad, but sibling connections for the same provider may still work — fail
+      // over instead of the generic "break on non-retryable status" path below, since
+      // a bare 401 is not in the executor's RETRYABLE set.
+      lastStatus = result.status || 502;
+      lastMessage = result.errorMessage ?? "Upstream error";
+      lastConnectionId = connection.id;
+      markCooldown(
+        connection.id,
+        Date.now() + cooldownMsFor(result.status, attempt, result.retryAfterMs),
+        lastMessage
+      );
+      continue;
     }
 
     lastStatus = result.status || 502;
