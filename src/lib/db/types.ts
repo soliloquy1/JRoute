@@ -95,7 +95,7 @@ export interface LogitBiasPreset {
   createdAt: number;
 }
 
-export type McpTransport = "http" | "sse" | "stdio";
+export type McpTransport = "http" | "sse" | "stdio" | "builtin";
 
 export interface McpServer {
   id: number;
@@ -106,6 +106,17 @@ export interface McpServer {
   toolAllowlist: string | null;
   triggerPattern: string | null;
   confirmedAt: number | null;
+}
+
+export type SearchProviderKind = "brave" | "serpapi" | "google_cse";
+
+export interface SearchProvider {
+  id: number;
+  kind: SearchProviderKind;
+  label: string;
+  apiKey: string;
+  configJson: string | null;
+  createdAt: number;
 }
 
 export interface ApiKeyRecord {
