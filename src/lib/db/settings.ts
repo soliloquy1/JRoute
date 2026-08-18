@@ -38,3 +38,22 @@ export function getFallbackStrategy(): FallbackStrategy {
 export function setFallbackStrategy(strategy: FallbackStrategy): void {
   setSetting(FALLBACK_STRATEGY_KEY, strategy);
 }
+
+const ACTIVE_SEARCH_PROVIDER_KEY = "activeSearchProviderId";
+
+/** `null` means no search provider configured — `web_search` must degrade to a tool-error
+ * content block, not throw, matching every other tool-failure path in this codebase. */
+export function getActiveSearchProviderId(): number | null {
+  const value = getSetting(ACTIVE_SEARCH_PROVIDER_KEY);
+  if (value === null) return null;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) ? parsed : null;
+}
+
+export function setActiveSearchProviderId(id: number | null): void {
+  if (id === null) {
+    getDb().prepare("DELETE FROM settings WHERE key = ?").run(ACTIVE_SEARCH_PROVIDER_KEY);
+    return;
+  }
+  setSetting(ACTIVE_SEARCH_PROVIDER_KEY, String(id));
+}
