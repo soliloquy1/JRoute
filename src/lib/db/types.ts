@@ -114,7 +114,10 @@ export interface SearchProvider {
   id: number;
   kind: SearchProviderKind;
   label: string;
-  apiKey: string;
+  /** `null` when no key is stored, or when a stored ciphertext could not be decrypted —
+   * `credentialDecryptFailed` tells the two apart. */
+  apiKey: string | null;
+  credentialDecryptFailed: boolean;
   configJson: string | null;
   createdAt: number;
 }

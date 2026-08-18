@@ -11,15 +11,23 @@ const ENTITIES: Record<string, string> = {
   ndash: "–",
 };
 
+const MAX_CODE_POINT = 0x10ffff;
+
+/** `Number.isFinite` alone is not enough: `String.fromCodePoint` throws `RangeError` for
+ * anything above U+10FFFF, and that exception escapes the whole extraction. Out-of-range
+ * entities are left as literal text instead. */
+function decodeCodePoint(cp: number, fallback: string): string {
+  if (!Number.isInteger(cp) || cp < 0 || cp > MAX_CODE_POINT) return fallback;
+  return String.fromCodePoint(cp);
+}
+
 function decodeEntities(text: string): string {
   return text.replace(/&(#\d+|#x[0-9a-fA-F]+|[a-zA-Z]+);/g, (match, code: string) => {
     if (code.startsWith("#x") || code.startsWith("#X")) {
-      const cp = parseInt(code.slice(2), 16);
-      return Number.isFinite(cp) ? String.fromCodePoint(cp) : match;
+      return decodeCodePoint(parseInt(code.slice(2), 16), match);
     }
     if (code.startsWith("#")) {
-      const cp = parseInt(code.slice(1), 10);
-      return Number.isFinite(cp) ? String.fromCodePoint(cp) : match;
+      return decodeCodePoint(parseInt(code.slice(1), 10), match);
     }
     return ENTITIES[code] ?? match;
   });

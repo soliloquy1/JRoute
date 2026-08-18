@@ -16,7 +16,8 @@ process.env.STORAGE_ENCRYPTION_KEY = "0".repeat(64);
 const { getDb, resetDb } = await import("../../src/lib/db/bootstrap.ts");
 const { createSearchProvider } = await import("../../src/lib/db/searchProviders.ts");
 const { setActiveSearchProviderId } = await import("../../src/lib/db/settings.ts");
-const { createBuiltinSearchServer } = await import("../../src/lib/mcp/builtinSearchServer.ts");
+const { createBuiltinSearchServer, readBoundedText } =
+  await import("../../src/lib/mcp/builtinSearchServer.ts");
 
 after(() => {
   resetDb();
@@ -94,6 +95,48 @@ test("web_fetch blocks a loopback URL via the SSRF gate (not merely a connection
   } finally {
     await new Promise<void>((resolve) => httpServer.close(() => resolve()));
   }
+});
+
+test("web_search refuses to run when the provider api key cannot be decrypted", async () => {
+  const id = createSearchProvider("brave", "Rotated", "brave-key");
+  setActiveSearchProviderId(id);
+  // Simulate a rotated/lost STORAGE_ENCRYPTION_KEY.
+  getDb()
+    .prepare("UPDATE search_providers SET api_key = ? WHERE id = ?")
+    .run("enc:v1:not-a-real-ciphertext", id);
+
+  let called = false;
+  const fakeBackend: SearchBackend = {
+    search: async () => {
+      called = true;
+      return [];
+    },
+  };
+  const client = await connectedClient(() => fakeBackend);
+  const result = await client.callTool({ name: "web_search", arguments: { query: "cats" } });
+  assert.equal(result.isError, true);
+  assert.equal(called, false, "must not call the backend with an empty api key");
+  await client.close();
+});
+
+test("readBoundedText stops reading once the byte budget is spent", async () => {
+  let pushed = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      // Would stream forever if the reader did not cancel at the cap.
+      pushed += 1024;
+      controller.enqueue(new Uint8Array(1024).fill(0x61));
+      if (pushed > 1024 * 1024) controller.close();
+    },
+  });
+  const text = await readBoundedText(new Response(stream), 4096);
+  assert.equal(text.length, 4096, "must truncate at the cap");
+  assert.ok(pushed <= 1024 * 64, `must stop pulling early, pulled ${pushed} bytes`);
+});
+
+test("readBoundedText returns the whole body when it fits under the cap", async () => {
+  const text = await readBoundedText(new Response("hello world"), 4096);
+  assert.equal(text, "hello world");
 });
 
 test("web_fetch query length is bounded before reaching the backend", async () => {

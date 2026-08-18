@@ -17,6 +17,8 @@ const {
   updateSearchProvider,
   deleteSearchProvider,
 } = await import("../../src/lib/db/searchProviders.ts");
+const { getActiveSearchProviderId, setActiveSearchProviderId } =
+  await import("../../src/lib/db/settings.ts");
 
 after(() => {
   resetDb();
@@ -25,6 +27,7 @@ after(() => {
 
 beforeEach(() => {
   getDb().prepare("DELETE FROM search_providers").run();
+  getDb().prepare("DELETE FROM settings").run();
 });
 
 test("stores api_key encrypted but returns it decrypted", () => {
@@ -67,4 +70,36 @@ test("deleteSearchProvider removes the row", () => {
   const id = createSearchProvider("brave", "Gone", "key");
   deleteSearchProvider(id);
   assert.equal(getSearchProvider(id), null);
+});
+
+test("deleting the active provider clears activeSearchProviderId", () => {
+  const id = createSearchProvider("brave", "Active", "key");
+  setActiveSearchProviderId(id);
+  deleteSearchProvider(id);
+  assert.equal(getActiveSearchProviderId(), null, "must not keep pointing at a deleted row");
+});
+
+test("deleting a non-active provider leaves activeSearchProviderId alone", () => {
+  const keep = createSearchProvider("brave", "Keep", "key-a");
+  const drop = createSearchProvider("serpapi", "Drop", "key-b");
+  setActiveSearchProviderId(keep);
+  deleteSearchProvider(drop);
+  assert.equal(getActiveSearchProviderId(), keep);
+});
+
+test("an api key that cannot be decrypted surfaces as credentialDecryptFailed, not an empty key", () => {
+  const id = createSearchProvider("brave", "Rotated", "real-key");
+  // Simulate a rotated/lost STORAGE_ENCRYPTION_KEY: the stored value still carries the
+  // `enc:v1:` prefix but no longer opens with the current key.
+  getDb()
+    .prepare("UPDATE search_providers SET api_key = ? WHERE id = ?")
+    .run("enc:v1:not-a-real-ciphertext", id);
+  const p = getSearchProvider(id);
+  assert.equal(p!.apiKey, null, "must not collapse an undecryptable key to an empty string");
+  assert.equal(p!.credentialDecryptFailed, true);
+});
+
+test("a provider with a decryptable key reports credentialDecryptFailed false", () => {
+  const id = createSearchProvider("brave", "Fine", "key");
+  assert.equal(getSearchProvider(id)!.credentialDecryptFailed, false);
 });

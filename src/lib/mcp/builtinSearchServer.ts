@@ -23,6 +23,42 @@ function textContent(text: string) {
 }
 
 /**
+ * Reads at most `maxBytes` of a response body and decodes it as UTF-8.
+ *
+ * `mcpSafeFetch` blocks private-network targets but puts no ceiling on the body size, so
+ * `res.arrayBuffer()` would allocate the whole (attacker-chosen) payload before any cap could
+ * be applied. Read the stream incrementally instead and cancel it the moment the budget is
+ * spent, so the cap actually bounds memory. Exported for direct unit testing — the SSRF gate
+ * makes it impractical to exercise this path through a real `web_fetch` call.
+ */
+export async function readBoundedText(res: Response, maxBytes: number): Promise<string> {
+  const body = res.body;
+  if (!body) return "";
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      const remaining = maxBytes - total;
+      if (value.byteLength >= remaining) {
+        chunks.push(value.subarray(0, remaining));
+        total = maxBytes;
+        break;
+      }
+      chunks.push(value);
+      total += value.byteLength;
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+  return Buffer.concat(chunks, total).toString("utf8");
+}
+
+/**
  * Builds the first-party, in-process MCP server that backs the `builtin` transport.
  * Exposes `web_search` (operator-configured search API) and `web_fetch` (SSRF-filtered
  * page fetch + plain-text extraction). `getBackendImpl` is injectable for tests; production
@@ -70,6 +106,11 @@ export function createBuiltinSearchServer(
       if (providerId === null) return errorContent("no search provider configured");
       const provider = getSearchProvider(providerId);
       if (!provider) return errorContent("configured search provider no longer exists");
+      if (provider.credentialDecryptFailed)
+        return errorContent(
+          "search provider api key could not be decrypted — STORAGE_ENCRYPTION_KEY may have changed"
+        );
+      if (!provider.apiKey) return errorContent("search provider has no api key configured");
 
       try {
         const backend = getBackendImpl(provider.kind);
@@ -93,9 +134,7 @@ export function createBuiltinSearchServer(
 
       try {
         const res = await mcpSafeFetch(url);
-        const buf = await res.arrayBuffer();
-        const bounded = buf.byteLength > MAX_FETCH_BYTES ? buf.slice(0, MAX_FETCH_BYTES) : buf;
-        const html = Buffer.from(bounded).toString("utf8");
+        const html = await readBoundedText(res, MAX_FETCH_BYTES);
         const text = htmlToText(html, MAX_FETCH_TEXT_LENGTH);
         return textContent(text || "(page had no extractable text)");
       } catch {

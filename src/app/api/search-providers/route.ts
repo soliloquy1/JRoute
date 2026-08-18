@@ -18,7 +18,8 @@ export async function GET(req: Request): Promise<Response> {
       id: p.id,
       kind: p.kind,
       label: p.label,
-      apiKeyMasked: p.apiKey.length > 4 ? `••••${p.apiKey.slice(-4)}` : "••••",
+      apiKeyMasked: p.apiKey && p.apiKey.length > 4 ? `••••${p.apiKey.slice(-4)}` : "••••",
+      credentialDecryptFailed: p.credentialDecryptFailed,
       configJson: p.configJson,
       createdAt: p.createdAt,
     }));

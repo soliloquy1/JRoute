@@ -1,6 +1,7 @@
 // src/lib/db/searchProviders.ts
 import { getDb } from "./bootstrap.ts";
-import { encrypt, decrypt } from "./encryption.ts";
+import { encrypt, decrypt, looksEncrypted } from "./encryption.ts";
+import { getActiveSearchProviderId, setActiveSearchProviderId } from "./settings.ts";
 import type { SearchProvider, SearchProviderKind } from "./types.ts";
 
 interface SearchProviderRow {
@@ -13,11 +14,28 @@ interface SearchProviderRow {
 }
 
 function toProvider(row: SearchProviderRow): SearchProvider {
+  const apiKey = (decrypt(row.api_key) ?? null) as string | null;
+  // decrypt() returns null both for a genuinely absent key and for a stored ciphertext it
+  // could not open (rotated/lost STORAGE_ENCRYPTION_KEY, or a corrupted value). Only the
+  // latter carries the `enc:v1:` prefix, so use it to tell the two apart instead of sending
+  // an empty key upstream and getting a confusing blind 401. Mirrors connections.ts.
+  const credentialDecryptFailed = looksEncrypted(row.api_key) && apiKey === null;
+
+  if (credentialDecryptFailed) {
+    // Never log the ciphertext or any part of the key — ids only.
+    console.warn(
+      `[searchProviders] Search provider id=${row.id} (kind=${row.kind}) has an encrypted ` +
+        `api_key that could not be decrypted. STORAGE_ENCRYPTION_KEY may have changed or ` +
+        `the stored value is corrupted.`
+    );
+  }
+
   return {
     id: row.id,
     kind: row.kind as SearchProviderKind,
     label: row.label,
-    apiKey: (decrypt(row.api_key) ?? "") as string,
+    apiKey,
+    credentialDecryptFailed,
     configJson: row.config_json,
     createdAt: row.created_at,
   };
@@ -73,6 +91,13 @@ export function updateSearchProvider(
     .run(...params);
 }
 
+/**
+ * Deletes the provider and, if it was the active one, clears `activeSearchProviderId`.
+ * Without that second step the setting keeps pointing at a row that no longer exists and
+ * every `web_search` call fails with "configured search provider no longer exists" until an
+ * operator resets it by hand.
+ */
 export function deleteSearchProvider(id: number): void {
   getDb().prepare("DELETE FROM search_providers WHERE id = ?").run(id);
+  if (getActiveSearchProviderId() === id) setActiveSearchProviderId(null);
 }

@@ -163,6 +163,42 @@ test("PUT /api/search-providers/active with { id: null } clears the active provi
   assert.equal(getActiveSearchProviderId(), null);
 });
 
+test("PUT /api/search-providers/active with an unknown id is 404 and leaves the setting alone", async () => {
+  const res = await active.PUT(
+    new Request("https://x/api/search-providers/active", {
+      method: "PUT",
+      headers: authHeaders,
+      body: JSON.stringify({ id: 99999 }),
+    })
+  );
+  assert.equal(res.status, 404);
+  assert.equal(getActiveSearchProviderId(), null, "must not point at a row that does not exist");
+});
+
+test("DELETE of the active provider clears the active setting", async () => {
+  const postRes = await providers.POST(
+    new Request("https://x/api/search-providers", {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({ kind: "brave", label: "A", apiKey: "k" }),
+    })
+  );
+  const { id } = (await postRes.json()) as { id: number };
+  await active.PUT(
+    new Request("https://x/api/search-providers/active", {
+      method: "PUT",
+      headers: authHeaders,
+      body: JSON.stringify({ id }),
+    })
+  );
+  const delRes = await providerById.DELETE(
+    new Request(`https://x/api/search-providers/${id}`, { method: "DELETE", headers: authHeaders }),
+    { params: Promise.resolve({ id: String(id) }) }
+  );
+  assert.equal(delRes.status, 200);
+  assert.equal(getActiveSearchProviderId(), null);
+});
+
 test("a malformed POST body returns 400 with no stack trace in the message", async () => {
   const res = await providers.POST(
     new Request("https://x/api/search-providers", {
