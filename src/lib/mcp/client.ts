@@ -3,7 +3,9 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { createBuiltinSearchServer } from "./builtinSearchServer.ts";
 import { mcpSafeFetch } from "./ssrfFetch.ts";
 import type { McpServer } from "../db/types.ts";
 
@@ -43,6 +45,16 @@ function buildTransport(server: McpServer): Transport {
       // whitespace for command + args, matching the SDK's StdioServerParameters shape.
       const [command, ...args] = server.target.split(/\s+/);
       return new StdioClientTransport({ command, args });
+    }
+    case "builtin": {
+      // In-process transport: link a client/server pair. The server side must be connected
+      // before the client sends its first request, so connect it synchronously in the same
+      // tick. connectMcpClient() below awaits client.connect() — the MCP handshake only
+      // proceeds once both ends are live, so fire-and-forget here (not awaited) is safe.
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      const builtinServer = createBuiltinSearchServer();
+      void builtinServer.connect(serverTransport);
+      return clientTransport;
     }
     default:
       throw new Error(`Unknown MCP transport: ${(server as { transport: string }).transport}`);
