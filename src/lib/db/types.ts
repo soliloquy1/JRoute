@@ -95,7 +95,7 @@ export interface LogitBiasPreset {
   createdAt: number;
 }
 
-export type McpTransport = "http" | "sse" | "stdio";
+export type McpTransport = "http" | "sse" | "stdio" | "builtin";
 
 export interface McpServer {
   id: number;
@@ -106,6 +106,20 @@ export interface McpServer {
   toolAllowlist: string | null;
   triggerPattern: string | null;
   confirmedAt: number | null;
+}
+
+export type SearchProviderKind = "brave" | "serpapi" | "google_cse";
+
+export interface SearchProvider {
+  id: number;
+  kind: SearchProviderKind;
+  label: string;
+  /** `null` when no key is stored, or when a stored ciphertext could not be decrypted —
+   * `credentialDecryptFailed` tells the two apart. */
+  apiKey: string | null;
+  credentialDecryptFailed: boolean;
+  configJson: string | null;
+  createdAt: number;
 }
 
 export interface ApiKeyRecord {

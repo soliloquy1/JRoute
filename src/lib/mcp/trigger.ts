@@ -29,7 +29,10 @@ export async function runTriggerMode(input: TriggerInput): Promise<TaggedBlock[]
     } catch {
       continue;
     }
-    if (!re.test(haystack)) continue;
+    // `re.exec` (not `re.test`) gives us the match object with capture groups; both run the
+    // pattern once, so using exec directly avoids running the regex twice.
+    const match = re.exec(haystack);
+    if (!match) continue;
 
     // Design spec §8.2: trigger mode fires ONE configured tool ("normally search"). The
     // first name in the server's toolAllowlist is that configured tool — trigger mode does
@@ -52,7 +55,10 @@ export async function runTriggerMode(input: TriggerInput): Promise<TaggedBlock[]
     let client: Awaited<ReturnType<typeof connectMcpClient>> | undefined;
     try {
       client = await connectMcpClient(server);
-      const result = await client.callTool({ name: firstAllowedName, arguments: {} });
+      // Pass any regex capture group as the tool's `query` argument; a pattern without a
+      // capture group fires the tool with empty arguments (unchanged behavior).
+      const callArgs = match[1] !== undefined ? { query: match[1] } : {};
+      const result = await client.callTool({ name: firstAllowedName, arguments: callArgs });
       const text = extractTextResult(result);
       debugLog("mcp_trigger.tool_result", {
         serverId: server.id,
