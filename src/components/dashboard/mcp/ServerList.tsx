@@ -17,6 +17,7 @@ export function ServerList({ servers }: { servers: McpServer[] }) {
   const router = useRouter();
   const [tools, setTools] = useState<Record<number, ToolDef[] | null>>({});
   const [discovering, setDiscovering] = useState<number | null>(null);
+  const [toggling, setToggling] = useState<number | null>(null);
   const [actionError, setActionError] = useState<Record<number, string>>({});
   const [selectedTool, setSelectedTool] = useState<{ serverId: number; tool: ToolDef } | null>(
     null
@@ -40,6 +41,23 @@ export function ServerList({ servers }: { servers: McpServer[] }) {
     }
     const body = (await res.json()) as { tools: ToolDef[] };
     setTools((t) => ({ ...t, [serverId]: body.tools }));
+  }
+
+  async function toggleEnabled(serverId: number, currentlyEnabled: boolean) {
+    if (toggling !== null) return;
+    setToggling(serverId);
+    setError(serverId, "");
+    const res = await fetch(`/api/mcp-servers/${serverId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: !currentlyEnabled }),
+    });
+    setToggling(null);
+    if (!res.ok) {
+      setError(serverId, "Failed to update server");
+      return;
+    }
+    router.refresh();
   }
 
   async function confirm(serverId: number) {
@@ -76,10 +94,7 @@ export function ServerList({ servers }: { servers: McpServer[] }) {
   return (
     <div className="flex max-w-3xl flex-col gap-3">
       {servers.map((s) => (
-        <section
-          key={s.id}
-          className="rounded-card border border-border bg-card p-4 shadow-soft"
-        >
+        <section key={s.id} className="rounded-card border border-border bg-card p-4 shadow-soft">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
@@ -97,9 +112,7 @@ export function ServerList({ servers }: { servers: McpServer[] }) {
                 {s.transport === "stdio" && (
                   <span
                     className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
-                      s.confirmedAt
-                        ? "bg-success/10 text-success"
-                        : "bg-warning/10 text-warning"
+                      s.confirmedAt ? "bg-success/10 text-success" : "bg-warning/10 text-warning"
                     }`}
                   >
                     {s.confirmedAt ? "spawn confirmed" : "spawn unconfirmed"}
@@ -121,6 +134,22 @@ export function ServerList({ servers }: { servers: McpServer[] }) {
                 Confirm spawn
               </button>
             )}
+            <button
+              onClick={() => toggleEnabled(s.id, s.enabled)}
+              disabled={toggling === s.id}
+              role="switch"
+              aria-checked={s.enabled}
+              title={s.enabled ? "Disable server" : "Enable server"}
+              className={`relative h-4 w-7 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
+                s.enabled ? "bg-primary" : "bg-bg-subtle"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 left-0.5 h-3 w-3 rounded-full bg-white transition-transform ${
+                  s.enabled ? "translate-x-3" : "translate-x-0"
+                }`}
+              />
+            </button>
             <button
               onClick={() => discover(s.id)}
               disabled={discovering === s.id}
@@ -151,9 +180,7 @@ export function ServerList({ servers }: { servers: McpServer[] }) {
                 return (
                   <div key={t.function.name}>
                     <button
-                      onClick={() =>
-                        setSelectedTool(selected ? null : { serverId: s.id, tool: t })
-                      }
+                      onClick={() => setSelectedTool(selected ? null : { serverId: s.id, tool: t })}
                       className={cn(
                         "flex items-center gap-1.5 rounded-control px-1.5 py-1 text-left font-mono text-xs transition-colors hover:bg-bg-subtle",
                         selected ? "text-primary" : "text-text-main"
