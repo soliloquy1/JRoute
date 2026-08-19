@@ -7,9 +7,8 @@ import type {
 } from "../types.ts";
 
 /**
- * Anthropic content blocks. Plan 2a covers text and image only; `tool_use` /
- * `tool_result` arrive in Plan 6 when MCP gives them a consumer, and thinking blocks are
- * unscheduled (design spec §2.2).
+ * Anthropic content blocks: text, image, and (native MCP tool-calling mode, design spec
+ * §6) `tool_use`/`tool_result`. Thinking blocks remain unscheduled (design spec §2.2).
  */
 export type AnthropicContentBlock =
   | { type: "text"; text: string }
@@ -185,8 +184,17 @@ export function mapMessagesToAnthropic(messages: OpenAIMessage[]): AnthropicMess
         tool_use_id: String(m.tool_call_id ?? ""),
         content: typeof m.content === "string" ? m.content : blockToText(m.content),
       };
-      if (last && last.role === "user" && last.content.length > 0) {
-        // Already mid-merge of a tool run — append to the same user message.
+      if (last && last.role === "user" && last.content[0]?.type === "tool_result") {
+        // Already mid-merge of a tool run — append to the same user message. Checking the
+        // FIRST block's type (not just `role === "user" && content.length > 0`) matters:
+        // the loose check would also merge a tool_result into a plain, non-tool-result user
+        // message (e.g. a client-supplied `role:"user"` turn immediately followed by a
+        // `role:"tool"` message), producing `[text, tool_result]` ordering — which point 2
+        // of this function's own docstring says Anthropic 400s on. Not reachable via
+        // loop.ts's own construction (it always inserts an `assistant(tool_calls)` message
+        // before any tool-result run), but mirrors the equivalent, already-correct guard in
+        // `gemini/request.ts`'s `mapMessagesToGemini`, and closes the gap for any future
+        // caller that builds messages differently.
         last.content.push(result);
       } else {
         out.push({ role: "user", content: [result] });

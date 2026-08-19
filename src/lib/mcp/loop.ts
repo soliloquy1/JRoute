@@ -187,6 +187,12 @@ export async function runNativeToolLoop(
   let totalPromptTokens = 0;
   let totalCompletionTokens = 0;
   let lastConnectionId: number | null = null;
+  // Soft cap, checked only between rounds — the per-round LLM dispatch is hard-bounded
+  // (roundSignal below), but sequential tool execution within a round (§5.4) is bounded
+  // only per-tool-call (toolCallTimeoutMs each), not in aggregate. A round with several
+  // slow-but-under-budget tool calls can push total wall-clock past this deadline before
+  // the next top-of-loop check fires. Intentional per design spec §5.1 (90s is sized to
+  // "leave headroom for MCP tool-execution time," not to hard-enforce it) — not a bug.
   const loopDeadline = Date.now() + deps.totalTimeoutMs;
 
   for (let round = 0; round < deps.maxRounds; round += 1) {

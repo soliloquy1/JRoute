@@ -334,6 +334,26 @@ test("consecutive tool-role messages merge into ONE Anthropic user message with 
   ]);
 });
 
+test("a tool-role message never merges into a preceding PLAIN user message — only into a prior tool_result run", () => {
+  // Regression: a loose `role === "user" && content.length > 0` guard would merge a
+  // tool_result block into any preceding non-empty user message, producing
+  // `[{type:"text"}, {type:"tool_result"}]` ordering — Anthropic 400s on text-before-result
+  // ordering (this function's own docstring, point 2). Not reachable via loop.ts's own
+  // construction (it always inserts an assistant(tool_calls) message first), but a client
+  // could in principle send `[user, tool]` history directly.
+  const messages = [
+    { role: "user", content: "hello" },
+    { role: "tool", tool_call_id: "call_1", content: "orphan result" },
+  ];
+  const mapped = mapMessagesToAnthropic(messages as never);
+  assert.equal(mapped.length, 2);
+  assert.deepEqual(mapped[0].content, [{ type: "text", text: "hello" }]);
+  assert.equal(mapped[1].role, "user");
+  assert.deepEqual(mapped[1].content, [
+    { type: "tool_result", tool_use_id: "call_1", content: "orphan result" },
+  ]);
+});
+
 test("a tool-role run is flushed before a following non-tool message, preserving order", () => {
   const messages = [
     {
