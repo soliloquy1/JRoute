@@ -17,6 +17,7 @@ import { getPreset } from "../src/lib/db/presets.ts";
 import { getRichPreset } from "../src/lib/db/richPresets.ts";
 import { assembleRichPreset } from "../src/lib/prompts/richAssemble.ts";
 import { runTriggerMode } from "../src/lib/mcp/trigger.ts";
+import { runNativeToolLoop } from "../src/lib/mcp/loop.ts";
 import { getLogitBiasPreset } from "../src/lib/db/logitBiasPresets.ts";
 import { computeLogitBias } from "../src/lib/prompts/logitBias.ts";
 import { debugLog, debugLogError, redactHeaders } from "../src/lib/debugLog/logger.ts";
@@ -39,6 +40,30 @@ function extractLastUserMessage(messages: Array<{ role: string; content?: unknow
     }
   }
   return "";
+}
+
+/** Synthesizes a single-chunk SSE stream for a completed native-mode answer. Native mode is
+ * always non-streaming internally (design spec §5); when the client asked for `stream:true` we
+ * wrap the final aggregated text in one `chat.completion.chunk` plus `[DONE]` so the response
+ * looks like a normal OpenAI SSE stream to the client. `finish_reason` is always `"stop"` —
+ * there is no token-level streaming to end, and a native tool round that produced text is a
+ * completed, stop-worthy turn. */
+function buildSyntheticSseStream(text: string, model: string): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  const chunk = {
+    id: `chatcmpl-${Date.now()}`,
+    object: "chat.completion.chunk",
+    created: Math.floor(Date.now() / 1000),
+    model,
+    choices: [{ index: 0, delta: { role: "assistant", content: text }, finish_reason: "stop" }],
+  };
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      controller.close();
+    },
+  });
 }
 
 // `looseObject` (not `object`) at BOTH levels. A plain `z.object` strips unknown keys,
@@ -221,6 +246,102 @@ export async function handleChat(
   if (!converter) {
     debugLog("converter.missing", { requestId, wireFormat: provider.wireFormat });
     return jsonError(503, `No converter for wire format: ${provider.wireFormat}`);
+  }
+
+  // Native tool-calling mode (design spec §5, §8): run the multi-round tool loop instead of a
+  // single upstream shot. Every other tool mode (trigger/off) falls through to the unchanged
+  // single-shot path below. The branch is placed AFTER the converter resolves because the loop
+  // needs `provider`/`upstreamModel`/`tokenResolver`/`converter`, all resolved here.
+  if (key.toolMode === "native") {
+    const responseConverter = getResponseConverter(provider.wireFormat);
+    const loopResult = await runNativeToolLoop({
+      provider,
+      providerId,
+      upstreamModel,
+      requestedModel,
+      maxTokens: resolved.maxTokens,
+      clientBody: body,
+      blocks,
+      converter,
+      responseConverter,
+      signal: req.signal,
+      tokenResolver,
+      requestId,
+      fetchImpl,
+    });
+
+    if (loopResult.ok === false) {
+      const failureMessage =
+        provider.wireFormat === "anthropic"
+          ? mapAnthropicErrorMessage(loopResult.message)
+          : loopResult.message;
+      debugLog("response.native_failure", {
+        requestId,
+        status: loopResult.status,
+        failureMessage,
+      });
+      logUsage({
+        apiKeyId: key.id,
+        providerId,
+        connectionId: loopResult.connectionId,
+        model: upstreamModel,
+        promptTokens: null,
+        outputTokens: null,
+        latencyMs: Date.now() - startedAt,
+        toolRounds: 0,
+        error: failureMessage,
+      });
+      return jsonError(loopResult.status, failureMessage);
+    }
+
+    debugLog("response.native_success", {
+      requestId,
+      connectionId: loopResult.connectionId,
+      roundsUsed: loopResult.roundsUsed,
+    });
+    logUsage({
+      apiKeyId: key.id,
+      providerId,
+      connectionId: loopResult.connectionId,
+      model: upstreamModel,
+      promptTokens: loopResult.usage.promptTokens,
+      outputTokens: loopResult.usage.completionTokens,
+      latencyMs: Date.now() - startedAt,
+      toolRounds: loopResult.roundsUsed,
+      error: null,
+    });
+
+    if (body.stream === true) {
+      return new Response(
+        keepaliveStream(buildSyntheticSseStream(loopResult.finalText, requestedModel)),
+        {
+          status: 200,
+          headers: sseHeaders(),
+        }
+      );
+    }
+
+    return new Response(
+      JSON.stringify({
+        id: `chatcmpl-${Date.now()}`,
+        object: "chat.completion",
+        created: Math.floor(Date.now() / 1000),
+        model: requestedModel,
+        choices: [
+          {
+            index: 0,
+            message: { role: "assistant", content: loopResult.finalText },
+            finish_reason: "stop",
+          },
+        ],
+        usage: {
+          prompt_tokens: loopResult.usage.promptTokens,
+          completion_tokens: loopResult.usage.completionTokens,
+          total_tokens: loopResult.usage.promptTokens + loopResult.usage.completionTokens,
+        },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
   }
 
   // Converted once, outside the failover loop: every connection for a provider speaks the
