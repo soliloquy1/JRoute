@@ -116,3 +116,58 @@ test("null stop_reason (still-streaming shape reused non-streaming) maps to stop
   assert.equal(mapStopReason(null), "stop");
   assert.equal(mapStopReason(undefined), "stop");
 });
+
+// --- Native MCP tool-calling mode (design spec §8.1) ---------------------------------------
+// Field names verified against the current Anthropic Messages API: a tool invocation is a
+// content block `{type:"tool_use", id, name, input}`, and the OpenAI tool_calls form serializes
+// `input` back to a JSON STRING in `function.arguments`.
+
+test("a tool_use-only response produces tool_calls with content: null", () => {
+  const out = convertResponse(
+    {
+      id: "msg_1",
+      content: [{ type: "tool_use", id: "toolu_1", name: "web_search", input: { query: "cats" } }],
+      stop_reason: "tool_use",
+      usage: { input_tokens: 10, output_tokens: 5 },
+    },
+    "claude-sonnet-4-6"
+  ) as {
+    choices: Array<{ message: { content: unknown; tool_calls?: unknown }; finish_reason: string }>;
+  };
+  const message = out.choices[0].message;
+  assert.equal(message.content, null);
+  assert.deepEqual(message.tool_calls, [
+    {
+      id: "toolu_1",
+      type: "function",
+      function: { name: "web_search", arguments: '{"query":"cats"}' },
+    },
+  ]);
+  assert.equal(out.choices[0].finish_reason, "tool_calls");
+});
+
+test("a mixed text + tool_use response keeps the text AND produces tool_calls", () => {
+  const out = convertResponse(
+    {
+      id: "msg_2",
+      content: [
+        { type: "text", text: "Let me check that." },
+        { type: "tool_use", id: "toolu_2", name: "web_search", input: {} },
+      ],
+      stop_reason: "tool_use",
+      usage: { input_tokens: 10, output_tokens: 5 },
+    },
+    "claude-sonnet-4-6"
+  ) as { choices: Array<{ message: { content: unknown; tool_calls?: unknown } }> };
+  const message = out.choices[0].message;
+  assert.equal(message.content, "Let me check that.");
+  assert.equal((message.tool_calls as unknown[]).length, 1);
+});
+
+test("a text-only response is unaffected — no tool_calls field at all", () => {
+  const out = convertResponse(
+    { id: "msg_3", content: [{ type: "text", text: "hi" }], stop_reason: "end_turn", usage: {} },
+    "claude-sonnet-4-6"
+  ) as { choices: Array<{ message: { tool_calls?: unknown } }> };
+  assert.equal("tool_calls" in out.choices[0].message, false);
+});
