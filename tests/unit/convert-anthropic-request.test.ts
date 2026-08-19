@@ -1,6 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { anthropicConverter, toContentBlocks } from "../../jroute/convert/anthropic/request.ts";
+import {
+  anthropicConverter,
+  toContentBlocks,
+  mapAnthropicTools,
+  mapMessagesToAnthropic,
+} from "../../jroute/convert/anthropic/request.ts";
 import type { TaggedBlock } from "../../jroute/convert/types.ts";
 
 const convert = (body: Record<string, unknown>, blocks: TaggedBlock[] = []) =>
@@ -218,5 +223,163 @@ test("a system-append block lands after Janitor's own system message, a system-p
     { type: "text", text: "JRoute jailbreak text." },
     { type: "text", text: "You are Ada, a character card." },
     { type: "text", text: "Remember the tone." },
+  ]);
+});
+
+// --- Native MCP tool-calling mode (design spec §6, §6.1) ----------------------------------
+// Field names verified against the current Anthropic Messages API docs: tool definitions use
+// `{name, description, input_schema}`, tool_choice "let the model decide" is `{type: "auto"}`,
+// an assistant tool call is `{type: "tool_use", id, name, input}` (input is a parsed object,
+// not a JSON string), and a result is `{type: "tool_result", tool_use_id, content}`.
+
+test("mapAnthropicTools converts OpenAI function defs to Anthropic tool shape", () => {
+  const tools = [
+    {
+      type: "function" as const,
+      function: {
+        name: "web_search",
+        description: "Search the web",
+        parameters: { type: "object", properties: {} },
+      },
+    },
+  ];
+  assert.deepEqual(mapAnthropicTools(tools), [
+    {
+      name: "web_search",
+      description: "Search the web",
+      input_schema: { type: "object", properties: {} },
+    },
+  ]);
+});
+
+test("convertRequest sets tools and forces tool_choice to auto when body.tools is present", () => {
+  const out = convert({
+    messages: [{ role: "user", content: "hi" }],
+    tools: [{ type: "function", function: { name: "t", description: "d", parameters: {} } }],
+    tool_choice: "none", // client-supplied — must be IGNORED, always forced to auto
+  });
+  assert.deepEqual(out.tool_choice, { type: "auto" });
+  assert.equal((out.tools as unknown[]).length, 1);
+});
+
+test("convertRequest omits tools/tool_choice entirely when body.tools is absent", () => {
+  const out = convert({ messages: [{ role: "user", content: "hi" }] });
+  assert.equal("tools" in out, false);
+  assert.equal("tool_choice" in out, false);
+});
+
+test("an assistant message with tool_calls maps to a tool_use content block, no text loss", () => {
+  const messages = [
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "call_1",
+          type: "function",
+          // OpenAI sends arguments as a JSON STRING — Anthropic's `input` must be the parsed
+          // object. A regression that forwards the raw string would 400 upstream.
+          function: { name: "web_search", arguments: '{"query":"cats"}' },
+        },
+      ],
+    },
+  ];
+  const mapped = mapMessagesToAnthropic(messages as never);
+  assert.equal(mapped.length, 1);
+  assert.deepEqual(mapped[0].content, [
+    { type: "tool_use", id: "call_1", name: "web_search", input: { query: "cats" } },
+  ]);
+});
+
+test("an assistant message with BOTH text and tool_calls keeps the text block first", () => {
+  const messages = [
+    {
+      role: "assistant",
+      content: "Let me look that up.",
+      tool_calls: [
+        { id: "call_1", type: "function", function: { name: "web_search", arguments: "{}" } },
+      ],
+    },
+  ];
+  const mapped = mapMessagesToAnthropic(messages as never);
+  assert.deepEqual(mapped[0].content, [
+    { type: "text", text: "Let me look that up." },
+    { type: "tool_use", id: "call_1", name: "web_search", input: {} },
+  ]);
+});
+
+test("consecutive tool-role messages merge into ONE Anthropic user message with multiple tool_result blocks", () => {
+  const messages = [
+    { role: "user", content: "search two things" },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        { id: "call_1", type: "function", function: { name: "web_search", arguments: "{}" } },
+        { id: "call_2", type: "function", function: { name: "web_search", arguments: "{}" } },
+      ],
+    },
+    { role: "tool", tool_call_id: "call_1", content: "result one" },
+    { role: "tool", tool_call_id: "call_2", content: "result two" },
+  ];
+  const mapped = mapMessagesToAnthropic(messages as never);
+  // user, assistant(tool_use x2), ONE merged user(tool_result x2) — not two separate user
+  // messages, which would 400 with "tool_use ids were found without tool_result blocks
+  // immediately after".
+  assert.equal(mapped.length, 3);
+  assert.equal(mapped[2].role, "user");
+  assert.deepEqual(mapped[2].content, [
+    { type: "tool_result", tool_use_id: "call_1", content: "result one" },
+    { type: "tool_result", tool_use_id: "call_2", content: "result two" },
+  ]);
+});
+
+test("a tool-role run is flushed before a following non-tool message, preserving order", () => {
+  const messages = [
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        { id: "call_1", type: "function", function: { name: "web_search", arguments: "{}" } },
+      ],
+    },
+    { role: "tool", tool_call_id: "call_1", content: "the result" },
+    { role: "user", content: "thanks, now what?" },
+  ];
+  const mapped = mapMessagesToAnthropic(messages as never);
+  assert.equal(mapped.length, 3);
+  assert.deepEqual(mapped[1].content, [
+    { type: "tool_result", tool_use_id: "call_1", content: "the result" },
+  ]);
+  assert.deepEqual(mapped[2].content, [{ type: "text", text: "thanks, now what?" }]);
+});
+
+test("convertRequest itself (not just the helper) routes tool-role messages through the merge", () => {
+  // Guards the WIRING: implementing mapMessagesToAnthropic but forgetting to call it from
+  // convertRequest would leave every tool result mapped as plain text and 400 upstream.
+  const out = convert({
+    messages: [
+      { role: "user", content: "search two things" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          { id: "call_1", type: "function", function: { name: "web_search", arguments: "{}" } },
+          { id: "call_2", type: "function", function: { name: "web_search", arguments: "{}" } },
+        ],
+      },
+      { role: "tool", tool_call_id: "call_1", content: "result one" },
+      { role: "tool", tool_call_id: "call_2", content: "result two" },
+    ],
+  });
+  const messages = out.messages as Array<{ role: string; content: unknown[] }>;
+  assert.equal(messages.length, 3);
+  assert.deepEqual(messages[1].content, [
+    { type: "tool_use", id: "call_1", name: "web_search", input: {} },
+    { type: "tool_use", id: "call_2", name: "web_search", input: {} },
+  ]);
+  assert.deepEqual(messages[2].content, [
+    { type: "tool_result", tool_use_id: "call_1", content: "result one" },
+    { type: "tool_result", tool_use_id: "call_2", content: "result two" },
   ]);
 });
