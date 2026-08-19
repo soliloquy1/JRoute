@@ -1,5 +1,7 @@
 import type { RichPresetJson } from "../prompts/stPresetSchema.ts";
 import type { LogitBiasEntry } from "../prompts/logitBiasSchema.ts";
+import type { RegexScript } from "../prompts/regexScriptSchema.ts";
+import type { ReasoningTagPair } from "../prompts/reasoningTagSchema.ts";
 
 export type WireFormat = "openai" | "anthropic" | "gemini";
 export type ProviderKind = "apikey" | "oauth";
@@ -86,6 +88,7 @@ export interface RichPreset {
   userName: string;
   createdAt: number;
   lorebookIds: number[];
+  reasoningTags: ReasoningTagPair[];
 }
 
 export interface LogitBiasPreset {
@@ -96,6 +99,13 @@ export interface LogitBiasPreset {
 }
 
 export type McpTransport = "http" | "sse" | "stdio" | "builtin";
+
+export interface RegexPreset {
+  id: number;
+  name: string;
+  scripts: RegexScript[];
+  createdAt: number;
+}
 
 export interface McpServer {
   id: number;
@@ -129,6 +139,7 @@ export interface ApiKeyRecord {
   presetId: number | null;
   richPresetId: number | null;
   logitBiasPresetId: number | null;
+  regexPresetId: number | null;
   toolMode: ToolMode;
   rateLimitPerMin: number;
   createdAt: number;

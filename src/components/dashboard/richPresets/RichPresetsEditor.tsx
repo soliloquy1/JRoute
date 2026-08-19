@@ -4,6 +4,7 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { RichPreset } from "@/lib/db/types.ts";
+import type { ReasoningTagPair } from "@/lib/prompts/reasoningTagSchema.ts";
 import type { RichPresetJson, RichPromptEntry } from "@/lib/prompts/stPresetSchema.ts";
 import type { Lorebook } from "@/lib/db/types.ts";
 import { RichPresetPromptRow } from "./RichPresetPromptRow.tsx";
@@ -38,6 +39,7 @@ export function RichPresetsEditor({
   const [draft, setDraft] = useState<RichPresetJson | null>(preset?.raw ?? null);
   const [charName, setCharName] = useState(preset?.charName ?? "");
   const [userName, setUserName] = useState(preset?.userName ?? "");
+  const [reasoningTags, setReasoningTags] = useState<ReasoningTagPair[]>(preset?.reasoningTags ?? []);
   const [importError, setImportError] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [importing, setImporting] = useState(false);
@@ -48,6 +50,7 @@ export function RichPresetsEditor({
     setDraft(p.raw);
     setCharName(p.charName);
     setUserName(p.userName);
+    setReasoningTags(p.reasoningTags);
     setImportError(null);
     setSaveState("idle");
   }
@@ -98,7 +101,7 @@ export function RichPresetsEditor({
     const res = await fetch(`/api/rich-presets/${preset.id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ raw: draft, charName, userName }),
+      body: JSON.stringify({ raw: draft, charName, userName, reasoningTags }),
     });
     if (!res.ok) {
       setSaveState("error");
@@ -154,6 +157,21 @@ export function RichPresetsEditor({
       (next as Record<string, unknown>)[field] = parsed;
     }
     setDraft(next);
+  }
+
+  function addReasoningTag() {
+    setSaveState("idle");
+    setReasoningTags((prev) => [...prev, { openTag: "", closeTag: "", expectImplicitOpen: false }]);
+  }
+
+  function updateReasoningTag(index: number, patch: Partial<ReasoningTagPair>) {
+    setSaveState("idle");
+    setReasoningTags((prev) => prev.map((t, i) => (i === index ? { ...t, ...patch } : t)));
+  }
+
+  function removeReasoningTag(index: number) {
+    setSaveState("idle");
+    setReasoningTags((prev) => prev.filter((_, i) => i !== index));
   }
 
   function updatePrompt(identifier: string, patch: Partial<RichPromptEntry>) {
@@ -379,6 +397,49 @@ export function RichPresetsEditor({
                 className={inputClass}
               />
             </Field>
+            <div>
+              <span className="mb-1 block text-xs font-medium text-text-muted">Reasoning tags</span>
+              <p className="mb-2 text-[11px] leading-relaxed text-text-muted">
+                Strips a planning/reasoning block wrapped in these tags from the assistant reply.
+              </p>
+              <div className="flex flex-col gap-2">
+                {reasoningTags.map((tag, i) => (
+                  <div key={i} className="flex flex-col gap-1 rounded-control border border-border p-2">
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        className={`${inputClass} font-mono text-[12px]`}
+                        placeholder="<open tag>"
+                        value={tag.openTag}
+                        onChange={(e) => updateReasoningTag(i, { openTag: e.target.value })}
+                      />
+                      <input
+                        className={`${inputClass} font-mono text-[12px]`}
+                        placeholder="</close tag>"
+                        value={tag.closeTag}
+                        onChange={(e) => updateReasoningTag(i, { closeTag: e.target.value })}
+                      />
+                      <DangerButton onClick={() => removeReasoningTag(i)}>Remove</DangerButton>
+                    </div>
+                    <label className="flex items-center gap-1.5 text-[11px] text-text-muted">
+                      <input
+                        type="checkbox"
+                        checked={tag.expectImplicitOpen}
+                        onChange={(e) => updateReasoningTag(i, { expectImplicitOpen: e.target.checked })}
+                        className="accent-primary"
+                      />
+                      Expect implicit open — check only if this model sometimes omits the opening
+                      tag; adds latency while detecting.
+                    </label>
+                  </div>
+                ))}
+                <button
+                  onClick={addReasoningTag}
+                  className="self-start rounded-control border border-dashed border-border-strong px-2.5 py-1 text-xs text-text-muted hover:bg-bg-subtle"
+                >
+                  + Add reasoning tag
+                </button>
+              </div>
+            </div>
             {lorebooks.length > 0 && (
               <div>
                 <span className="mb-1 block text-xs font-medium text-text-muted">Lorebooks</span>

@@ -20,9 +20,15 @@ import { runTriggerMode } from "../src/lib/mcp/trigger.ts";
 import { runNativeToolLoop } from "../src/lib/mcp/loop.ts";
 import { getLogitBiasPreset } from "../src/lib/db/logitBiasPresets.ts";
 import { computeLogitBias } from "../src/lib/prompts/logitBias.ts";
+import { getRegexPreset } from "../src/lib/db/regexPresets.ts";
+import { applyRegexScriptsToContent, hasActiveScripts } from "../src/lib/prompts/regexApply.ts";
+import { wrapWithRegexTransform } from "./regexStreamTransform.ts";
+import { hasReasoningTags, applyReasoningTagStrip } from "../src/lib/prompts/reasoningTagScanner.ts";
+import { wrapWithReasoningTransform } from "./reasoningStreamTransform.ts";
 import { debugLog, debugLogError, redactHeaders } from "../src/lib/debugLog/logger.ts";
 import type { ApiKeyRecord } from "../src/lib/db/types.ts";
 import type { TaggedBlock } from "./convert/types.ts";
+import type { MacroContext } from "../src/lib/prompts/macros.ts";
 
 function newRequestId(): string {
   return Math.random().toString(36).slice(2, 10);
@@ -242,6 +248,36 @@ export async function handleChat(
     }
   }
 
+  // Loaded once and reused by all four wiring points (User Input regex, AI Output regex
+  // both streaming and non-streaming, AI Output reasoning-tag stripping) — fixed for the
+  // whole request lifetime, including the full duration of a streaming response, so a
+  // concurrent preset edit never affects an in-flight request.
+  const activeRichPreset = key.richPresetId !== null ? getRichPreset(key.richPresetId) : null;
+  const reasoningTags = activeRichPreset?.reasoningTags ?? [];
+  const regexPreset = key.regexPresetId !== null ? getRegexPreset(key.regexPresetId) : null;
+  const regexScripts = regexPreset?.scripts ?? [];
+  const regexMacroCtx: MacroContext = activeRichPreset
+    ? { char: activeRichPreset.charName, user: activeRichPreset.userName }
+    : { char: "", user: "" };
+
+  if (key.regexPresetId !== null && !regexPreset) {
+    debugLog("regexPreset.stale_reference", { requestId, regexPresetId: key.regexPresetId });
+  }
+
+  if (hasActiveScripts(regexScripts, 1)) {
+    const messages = body.messages as Array<{ role: string; content?: unknown }>;
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (messages[i].role === "user") {
+        messages[i] = {
+          ...messages[i],
+          content: applyRegexScriptsToContent(messages[i].content, regexScripts, 1, regexMacroCtx),
+        };
+        debugLog("regex.userInputApplied", { requestId, regexPresetId: key.regexPresetId });
+        break;
+      }
+    }
+  }
+
   const converter = getConverter(provider.wireFormat);
   if (!converter) {
     debugLog("converter.missing", { requestId, wireFormat: provider.wireFormat });
@@ -456,7 +492,13 @@ export async function handleChat(
         stream: true,
         wireFormat: provider.wireFormat,
       });
-      return new Response(keepaliveStream(result.stream), {
+      const reasoningStripped = hasReasoningTags(reasoningTags)
+        ? wrapWithReasoningTransform(result.stream, reasoningTags, requestId)
+        : result.stream;
+      const outStream = hasActiveScripts(regexScripts, 2)
+        ? wrapWithRegexTransform(reasoningStripped, regexScripts, regexMacroCtx, requestId)
+        : reasoningStripped;
+      return new Response(keepaliveStream(outStream), {
         status: 200,
         headers: sseHeaders(),
       });
@@ -504,19 +546,45 @@ export async function handleChat(
         error,
       });
     });
+    const reasoningStripped = hasReasoningTags(reasoningTags)
+      ? wrapWithReasoningTransform(wrapped, reasoningTags, requestId)
+      : wrapped;
+    const outStream = hasActiveScripts(regexScripts, 2)
+      ? wrapWithRegexTransform(reasoningStripped, regexScripts, regexMacroCtx, requestId)
+      : reasoningStripped;
     debugLog("response.success", {
       requestId,
       connectionId,
       stream: true,
       wireFormat: provider.wireFormat,
     });
-    return new Response(keepaliveStream(wrapped), { status: 200, headers: sseHeaders() });
+    return new Response(keepaliveStream(outStream), { status: 200, headers: sseHeaders() });
   }
 
   const responseConverter = getResponseConverter(provider.wireFormat);
   const outJson = responseConverter
     ? responseConverter.convertResponse(result.json, requestedModel)
     : result.json;
+  if (hasReasoningTags(reasoningTags)) {
+    const msg = (outJson as { choices?: Array<{ message?: { content?: unknown } }> } | null)
+      ?.choices?.[0]?.message;
+    if (msg && typeof msg.content === "string") {
+      msg.content = applyReasoningTagStrip(msg.content, reasoningTags);
+      debugLog("reasoning.aiOutputApplied", { requestId, stream: false });
+    }
+  }
+  if (hasActiveScripts(regexScripts, 2)) {
+    const msg = (outJson as { choices?: Array<{ message?: { content?: unknown } }> } | null)
+      ?.choices?.[0]?.message;
+    if (msg) {
+      msg.content = applyRegexScriptsToContent(msg.content, regexScripts, 2, regexMacroCtx);
+      debugLog("regex.aiOutputApplied", {
+        requestId,
+        regexPresetId: key.regexPresetId,
+        stream: false,
+      });
+    }
+  }
   const usage = (outJson as { usage?: UpstreamUsage } | null)?.usage;
   // Phase 3/4: fold the token usage into the rolling quota window now that we know it.
   try {

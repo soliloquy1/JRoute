@@ -45,6 +45,7 @@ function nativeKey() {
     presetId: null,
     richPresetId: null,
     logitBiasPresetId: null,
+    regexPresetId: null,
     toolMode: "native" as const,
     rateLimitPerMin: 1000,
     createdAt: Date.now(),

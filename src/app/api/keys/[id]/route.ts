@@ -6,6 +6,7 @@ import {
   setApiKeyPreset,
   setApiKeyRichPreset,
   setApiKeyLogitBiasPreset,
+  setApiKeyRegexPreset,
   revokeApiKey,
 } from "@/lib/auth/apiKeys.ts";
 import { parseIdParam } from "@/lib/api/validation.ts";
@@ -14,6 +15,7 @@ const PatchKeySchema = z.object({
   presetId: z.number().int().nullable().optional(),
   richPresetId: z.number().int().nullable().optional(),
   logitBiasPresetId: z.number().int().nullable().optional(),
+  regexPresetId: z.number().int().nullable().optional(),
 });
 
 export async function PATCH(
@@ -33,6 +35,9 @@ export async function PATCH(
     }
     if (parsed.data.logitBiasPresetId !== undefined) {
       setApiKeyLogitBiasPreset(id, parsed.data.logitBiasPresetId);
+    }
+    if (parsed.data.regexPresetId !== undefined) {
+      setApiKeyRegexPreset(id, parsed.data.regexPresetId);
     }
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,

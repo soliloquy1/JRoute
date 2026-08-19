@@ -1,8 +1,10 @@
 // src/lib/db/richPresets.ts
 import { getDb } from "./bootstrap.ts";
 import { RichPresetJsonSchema } from "../prompts/stPresetSchema.ts";
+import { ReasoningTagPairsSchema } from "../prompts/reasoningTagSchema.ts";
 import type { RichPreset } from "./types.ts";
 import type { RichPresetJson } from "../prompts/stPresetSchema.ts";
+import type { ReasoningTagPair, ReasoningTagPairsInput } from "../prompts/reasoningTagSchema.ts";
 
 interface RichPresetRow {
   id: number;
@@ -11,6 +13,7 @@ interface RichPresetRow {
   char_name: string;
   user_name: string;
   created_at: number;
+  reasoning_tags: string;
 }
 
 function lorebookIdsFor(richPresetId: number): number[] {
@@ -31,21 +34,30 @@ function toRichPreset(row: RichPresetRow): RichPreset {
     userName: row.user_name,
     createdAt: row.created_at,
     lorebookIds: lorebookIdsFor(row.id),
+    reasoningTags: JSON.parse(row.reasoning_tags) as ReasoningTagPair[],
   };
 }
 
 export function createRichPreset(
   name: string,
   raw: unknown,
-  opts: Partial<{ charName: string; userName: string }> = {}
+  opts: Partial<{ charName: string; userName: string; reasoningTags: ReasoningTagPairsInput }> = {}
 ): number {
   const parsed = RichPresetJsonSchema.parse(raw);
+  const reasoningTags = ReasoningTagPairsSchema.parse(opts.reasoningTags ?? []);
   const info = getDb()
     .prepare(
-      `INSERT INTO rich_presets (name, raw_json, char_name, user_name, created_at)
-       VALUES (?, ?, ?, ?, ?)`
+      `INSERT INTO rich_presets (name, raw_json, char_name, user_name, created_at, reasoning_tags)
+       VALUES (?, ?, ?, ?, ?, ?)`
     )
-    .run(name, JSON.stringify(parsed), opts.charName ?? "", opts.userName ?? "", Date.now());
+    .run(
+      name,
+      JSON.stringify(parsed),
+      opts.charName ?? "",
+      opts.userName ?? "",
+      Date.now(),
+      JSON.stringify(reasoningTags)
+    );
   return Number(info.lastInsertRowid);
 }
 
@@ -62,7 +74,13 @@ export function listRichPresets(): RichPreset[] {
 
 export function updateRichPreset(
   id: number,
-  patch: Partial<{ name: string; raw: unknown; charName: string; userName: string }>
+  patch: Partial<{
+    name: string;
+    raw: unknown;
+    charName: string;
+    userName: string;
+    reasoningTags: ReasoningTagPairsInput;
+  }>
 ): void {
   const sets: string[] = [];
   const params: unknown[] = [];
@@ -82,6 +100,11 @@ export function updateRichPreset(
   if (patch.userName !== undefined) {
     sets.push("user_name = ?");
     params.push(patch.userName);
+  }
+  if (patch.reasoningTags !== undefined) {
+    const parsed = ReasoningTagPairsSchema.parse(patch.reasoningTags);
+    sets.push("reasoning_tags = ?");
+    params.push(JSON.stringify(parsed));
   }
   if (sets.length === 0) return;
   params.push(id);

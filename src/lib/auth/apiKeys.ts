@@ -10,6 +10,7 @@ interface ApiKeyRow {
   preset_id: number | null;
   rich_preset_id: number | null;
   logit_bias_preset_id: number | null;
+  regex_preset_id: number | null;
   tool_mode: string;
   rate_limit_per_min: number;
   created_at: number;
@@ -29,6 +30,7 @@ function toRecord(row: ApiKeyRow): ApiKeyRecord {
     presetId: row.preset_id,
     richPresetId: row.rich_preset_id,
     logitBiasPresetId: row.logit_bias_preset_id,
+    regexPresetId: row.regex_preset_id,
     toolMode: row.tool_mode as ToolMode,
     rateLimitPerMin: row.rate_limit_per_min,
     createdAt: row.created_at,
@@ -99,6 +101,15 @@ export function setApiKeyLogitBiasPreset(id: number, logitBiasPresetId: number |
   getDb()
     .prepare("UPDATE api_keys SET logit_bias_preset_id = ? WHERE id = ?")
     .run(logitBiasPresetId, id);
+}
+
+// Independent of presetId/richPresetId/logitBiasPresetId — a regex preset is an
+// orthogonal dimension, applies regardless of upstream wire format (unlike logit_bias,
+// which is OpenAI-wire-format-specific), so this setter does not clear any other column.
+export function setApiKeyRegexPreset(id: number, regexPresetId: number | null): void {
+  getDb()
+    .prepare("UPDATE api_keys SET regex_preset_id = ? WHERE id = ?")
+    .run(regexPresetId, id);
 }
 
 export function listApiKeys(): ApiKeyRecord[] {
