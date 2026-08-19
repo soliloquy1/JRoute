@@ -118,7 +118,7 @@ export interface McpServer {
   confirmedAt: number | null;
 }
 
-export type SearchProviderKind = "brave" | "serpapi" | "google_cse";
+export type SearchProviderKind = "brave" | "serpapi" | "google_cse" | "tavily";
 
 export interface SearchProvider {
   id: number;
