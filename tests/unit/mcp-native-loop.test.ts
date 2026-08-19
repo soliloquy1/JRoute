@@ -2,6 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { runNativeToolLoop, type NativeLoopDeps } from "../../src/lib/mcp/loop.ts";
+import type { DispatchOutcome } from "../../jroute/dispatchAttempt.ts";
 import type { Provider } from "../../src/lib/db/types.ts";
 
 const provider: Provider = {
@@ -227,7 +228,7 @@ test("a failed tool call is isolated — injects a failure message, loop continu
 });
 
 test("max rounds exhausted with partial text returns that text, not the fallback", async () => {
-  const alwaysToolCalls = async () => ({
+  const alwaysToolCalls = async (): Promise<DispatchOutcome> => ({
     ok: true,
     connectionId: 1,
     windowMs: 60000,
@@ -274,7 +275,7 @@ test("max rounds exhausted with partial text returns that text, not the fallback
 });
 
 test("max rounds exhausted with NO text returns the fixed fallback string", async () => {
-  const alwaysToolCallsNoText = async () => ({
+  const alwaysToolCallsNoText = async (): Promise<DispatchOutcome> => ({
     ok: true,
     connectionId: 1,
     windowMs: 60000,
@@ -322,6 +323,7 @@ test("a dispatch failure propagates as the loop's own failure — not isolated l
     dispatch: async () => ({
       ok: false,
       clientAborted: false,
+      noCandidates: false,
       status: 503,
       message: "All connections failed",
       connectionId: null,
