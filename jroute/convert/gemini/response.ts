@@ -1,11 +1,18 @@
 // jroute/convert/gemini/response.ts
+import { GEMINI_THOUGHT_SIG_KEY } from "../../lib/mcp/helpers.ts";
 
 /** Fields this converter reads from a non-streaming Gemini generateContent response.
  * https://ai.google.dev/api/generate-content — the shape is a superset; only consumed
  * fields are declared. */
 export interface GeminiResponseJson {
   candidates?: Array<{
-    content?: { role?: string; parts?: Array<{ text?: string }> };
+    content?: {
+      role?: string;
+      parts?: Array<
+        | { text?: string }
+        | { functionCall?: { name?: string; args?: unknown }; thoughtSignature?: string }
+      >;
+    };
     finishReason?: string;
     index?: number;
   }>;
@@ -59,10 +66,41 @@ export function convertResponse(
   requestedModel: string
 ): Record<string, unknown> {
   const candidate = json.candidates?.[0];
-  const text = (candidate?.content?.parts ?? []).map((p) => p.text ?? "").join("");
+  const parts = candidate?.content?.parts ?? [];
+  const text = parts
+    .filter((p): p is { text?: string } => "text" in p)
+    .map((p) => p.text ?? "")
+    .join("");
+  // Native MCP mode (design spec §6.2/§8.1): a part may carry a `functionCall` (and optionally
+  // a sibling `thoughtSignature`, which must be preserved verbatim back to Gemini next turn).
+  const functionCallParts = parts.filter(
+    (p): p is { functionCall?: { name?: string; args?: unknown }; thoughtSignature?: string } =>
+      "functionCall" in p
+  );
 
   const promptTokens = promptTokensFrom(json.usageMetadata);
   const completionTokens = json.usageMetadata?.candidatesTokenCount ?? 0;
+
+  const message: Record<string, unknown> = {
+    role: "assistant",
+    // A function-call-only response has no conversational text — OpenAI uses `content: null`.
+    // When text IS present alongside the call, keep it.
+    content: functionCallParts.length > 0 && text.length === 0 ? null : text,
+  };
+  if (functionCallParts.length > 0) {
+    message.tool_calls = functionCallParts.map((p, i) => {
+      const call: Record<string, unknown> = {
+        id: `call_${Date.now()}_${i}`,
+        type: "function",
+        function: {
+          name: p.functionCall?.name ?? "",
+          arguments: JSON.stringify(p.functionCall?.args ?? {}),
+        },
+      };
+      if (p.thoughtSignature) call[GEMINI_THOUGHT_SIG_KEY] = p.thoughtSignature;
+      return call;
+    });
+  }
 
   return {
     id: `chatcmpl-${Date.now()}`,
@@ -72,7 +110,7 @@ export function convertResponse(
     choices: [
       {
         index: 0,
-        message: { role: "assistant", content: text },
+        message,
         finish_reason: mapFinishReason(candidate?.finishReason),
       },
     ],

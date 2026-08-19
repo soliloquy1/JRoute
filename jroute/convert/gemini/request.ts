@@ -5,6 +5,7 @@ import type {
   RequestConverter,
   TaggedBlock,
 } from "../types.ts";
+import { thoughtSignatureFromToolCall, withThoughtSignature } from "../../lib/mcp/helpers.ts";
 
 /** A Gemini content part. Native MCP mode adds `functionCall` (design spec §6.2). The
  * `thoughtSignature` field is part of a `functionCall` part — Gemini 3 requires it to be
@@ -14,6 +15,7 @@ export interface GeminiPart {
   text?: string;
   functionCall?: { name: string; args: unknown };
   thoughtSignature?: string;
+  functionResponse?: { name: string; response: { result: string } };
 }
 
 /** A Gemini `contents[]` entry. Role is `user` or `model` — there is no `system` role here
@@ -113,7 +115,10 @@ export function mapMessagesToGemini(messages: OpenAIMessage[]): GeminiContent[] 
             args = fa;
           }
         }
-        parts.push({ functionCall: { name: typeof name === "string" ? name : "", args } });
+        const part: GeminiPart = {
+          functionCall: { name: typeof name === "string" ? name : "", args },
+        };
+        parts.push(withThoughtSignature(part, thoughtSignatureFromToolCall(call)));
       }
       out.push({ role: "model", parts });
       continue;
