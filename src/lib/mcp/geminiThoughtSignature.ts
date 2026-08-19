@@ -1,4 +1,4 @@
-// src/lib/mcp/helpers.ts
+// src/lib/mcp/geminiThoughtSignature.ts
 //
 // Native-mode plumbing shared between Gemini's request and response converters (design spec
 // §6.2 / §8.1). The thought signature is Gemini 3's anti-tamper token: every `functionCall`

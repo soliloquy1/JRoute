@@ -5,7 +5,10 @@ import type {
   RequestConverter,
   TaggedBlock,
 } from "../types.ts";
-import { thoughtSignatureFromToolCall, withThoughtSignature } from "../../lib/mcp/helpers.ts";
+import {
+  thoughtSignatureFromToolCall,
+  withThoughtSignature,
+} from "../../../src/lib/mcp/geminiThoughtSignature.ts";
 
 /** A Gemini content part. Native MCP mode adds `functionCall` (design spec §6.2). The
  * `thoughtSignature` field is part of a `functionCall` part — Gemini 3 requires it to be

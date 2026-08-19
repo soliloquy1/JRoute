@@ -1,5 +1,5 @@
 // jroute/convert/gemini/response.ts
-import { GEMINI_THOUGHT_SIG_KEY } from "../../lib/mcp/helpers.ts";
+import { GEMINI_THOUGHT_SIG_KEY } from "../../../src/lib/mcp/geminiThoughtSignature.ts";
 
 /** Fields this converter reads from a non-streaming Gemini generateContent response.
  * https://ai.google.dev/api/generate-content — the shape is a superset; only consumed
