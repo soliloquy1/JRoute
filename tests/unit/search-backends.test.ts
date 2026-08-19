@@ -65,3 +65,28 @@ test("google_cse backend returns [] when config.cx is missing, does not throw", 
   const results = await backend.search("cse-key", null, "cats");
   assert.deepEqual(results, []);
 });
+
+test("tavily backend POSTs the api key and query, maps results", async () => {
+  const fetchMock = mock.fn(async (url: string | URL, init?: RequestInit) => {
+    assert.equal(String(url), "https://api.tavily.com/search");
+    assert.equal(init?.method, "POST");
+    assert.equal((init?.headers as Record<string, string>)["content-type"], "application/json");
+    const body = JSON.parse(init?.body as string);
+    assert.equal(body.api_key, "tavily-key");
+    assert.equal(body.query, "cats");
+    return new Response(
+      JSON.stringify({ results: [{ title: "T", url: "https://e.com", content: "S" }] }),
+      { status: 200 }
+    );
+  });
+  const backend = getBackend("tavily", fetchMock as unknown as typeof fetch);
+  const results = await backend.search("tavily-key", null, "cats");
+  assert.deepEqual(results, [{ title: "T", url: "https://e.com", snippet: "S" }]);
+});
+
+test("tavily backend returns [] and does not throw on a non-2xx response", async () => {
+  const fetchMock = mock.fn(async () => new Response("unauthorized", { status: 401 }));
+  const backend = getBackend("tavily", fetchMock as unknown as typeof fetch);
+  const results = await backend.search("tavily-key", null, "cats");
+  assert.deepEqual(results, []);
+});

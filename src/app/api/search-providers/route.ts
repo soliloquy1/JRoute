@@ -5,7 +5,7 @@ import { jsonError } from "@jroute/errors.ts";
 import { createSearchProvider, listSearchProviders } from "@/lib/db/searchProviders.ts";
 
 const CreateSchema = z.object({
-  kind: z.enum(["brave", "serpapi", "google_cse"]),
+  kind: z.enum(["brave", "serpapi", "google_cse", "tavily"]),
   label: z.string().min(1),
   apiKey: z.string().min(1),
   configJson: z.string().nullable().optional(),

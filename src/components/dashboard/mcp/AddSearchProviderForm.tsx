@@ -5,7 +5,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { PrimaryButton, Field, inputClass, InlineError } from "../ui.tsx";
 
-const KINDS = ["brave", "serpapi", "google_cse"] as const;
+const KINDS = ["brave", "serpapi", "google_cse", "tavily"] as const;
 type Kind = (typeof KINDS)[number];
 
 export function AddSearchProviderForm() {
