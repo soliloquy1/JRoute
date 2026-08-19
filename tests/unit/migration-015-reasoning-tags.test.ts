@@ -1,12 +1,12 @@
-// tests/unit/migration-014-reasoning-tags.test.ts
+// tests/unit/migration-015-reasoning-tags.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-test("migration 014 adds rich_presets.reasoning_tags with a default of '[]'", async () => {
-  const tmpDir = mkdtempSync(join(tmpdir(), "jroute-migration-014-"));
+test("migration 015 adds rich_presets.reasoning_tags with a default of '[]'", async () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), "jroute-migration-015-"));
   process.env.DATA_DIR = tmpDir;
   const { getDb, resetDb } = await import("../../src/lib/db/bootstrap.ts");
   const db = getDb();
