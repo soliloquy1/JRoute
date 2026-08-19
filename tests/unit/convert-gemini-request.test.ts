@@ -1,7 +1,11 @@
 // tests/unit/convert-gemini-request.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { geminiConverter } from "../../jroute/convert/gemini/request.ts";
+import {
+  geminiConverter,
+  mapGeminiFunctionDeclarations,
+  mapMessagesToGemini,
+} from "../../jroute/convert/gemini/request.ts";
 import type { ConvertRequestParams } from "../../jroute/convert/types.ts";
 
 function params(over: Partial<ConvertRequestParams>): ConvertRequestParams {
@@ -248,4 +252,126 @@ test("does not forward min_p, top_a, or repetition_penalty — no Gemini equival
   assert.equal("minP" in cfg, false);
   assert.equal("topA" in cfg, false);
   assert.equal("repetitionPenalty" in cfg, false);
+});
+
+// --- Native MCP tool-calling mode (design spec §6.2) ----------------------------------------
+// Field names verified against the current Gemini docs: tools use `functionDeclarations` with
+// `{name, description, parameters}` (note: `parameters`, NOT Anthropic's `input_schema`), and
+// the mode is forced via `toolConfig.functionCallingConfig.mode` = "AUTO".
+
+test("mapGeminiFunctionDeclarations converts OpenAI fns to Gemini functionDeclarations shape", () => {
+  const tools = [
+    {
+      type: "function" as const,
+      function: {
+        name: "web_search",
+        description: "Search the web",
+        parameters: { type: "object" },
+      },
+    },
+  ];
+  assert.deepEqual(mapGeminiFunctionDeclarations(tools), [
+    { name: "web_search", description: "Search the web", parameters: { type: "object" } },
+  ]);
+});
+
+test("convertRequest sets functionDeclarations and forces AUTO mode when body.tools present", () => {
+  const out = geminiConverter.convertRequest(
+    params({
+      body: {
+        messages: [{ role: "user", content: "hi" }],
+        // client-supplied tool_choice must be IGNORED, always forced to AUTO
+        tools: [{ type: "function", function: { name: "t", description: "d", parameters: {} } }],
+        tool_choice: "none",
+      },
+    })
+  );
+  assert.deepEqual(out.tools, [
+    { functionDeclarations: [{ name: "t", description: "d", parameters: {} }] },
+  ]);
+  assert.deepEqual(out.toolConfig, { functionCallingConfig: { mode: "AUTO" } });
+});
+
+test("convertRequest omits tools/toolConfig entirely when body.tools is absent", () => {
+  const out = geminiConverter.convertRequest(
+    params({ body: { messages: [{ role: "user", content: "hi" }] } })
+  );
+  assert.equal("tools" in out, false);
+  assert.equal("toolConfig" in out, false);
+});
+
+test("an assistant message with tool_calls maps to a model part with functionCall, parsed args", () => {
+  const contents = mapMessagesToGemini([
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "1",
+          type: "function",
+          function: { name: "web_search", arguments: '{"query":"cats"}' },
+        },
+      ],
+    },
+  ] as never);
+  assert.equal(contents.length, 1);
+  assert.equal(contents[0].role, "model");
+  assert.deepEqual(contents[0].parts, [
+    { functionCall: { name: "web_search", args: { query: "cats" } } },
+  ]);
+});
+
+test("consecutive tool-role messages merge into ONE user content with multiple functionResponse parts", () => {
+  const contents = mapMessagesToGemini([
+    { role: "user", content: "search two things" },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        { id: "call_1", type: "function", function: { name: "web_search", arguments: "{}" } },
+        { id: "call_2", type: "function", function: { name: "web_search", arguments: "{}" } },
+      ],
+    },
+    { role: "tool", name: "web_search", tool_call_id: "call_1", content: "result one" },
+    { role: "tool", name: "web_search", tool_call_id: "call_2", content: "result two" },
+  ] as never);
+  // user, model(functionCall x2), ONE merged user(functionResponse x2)
+  assert.equal(contents.length, 3);
+  assert.equal(contents[2].role, "user");
+  assert.deepEqual(contents[2].parts, [
+    { functionResponse: { name: "web_search", response: { result: "result one" } } },
+    { functionResponse: { name: "web_search", response: { result: "result two" } } },
+  ]);
+});
+
+test("convertRequest itself routes tool-role messages through the merge", () => {
+  const out = geminiConverter.convertRequest(
+    params({
+      body: {
+        messages: [
+          { role: "user", content: "search two things" },
+          {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              { id: "call_1", type: "function", function: { name: "web_search", arguments: "{}" } },
+              { id: "call_2", type: "function", function: { name: "web_search", arguments: "{}" } },
+            ],
+          },
+          { role: "tool", name: "web_search", tool_call_id: "call_1", content: "result one" },
+          { role: "tool", name: "web_search", tool_call_id: "call_2", content: "result two" },
+        ],
+      },
+    })
+  );
+  const contents = out.contents as Array<{ role: string; parts: unknown[] }>;
+  assert.equal(contents.length, 3);
+  assert.deepEqual(contents[1].parts, [
+    { functionCall: { name: "web_search", args: {} } },
+    { functionCall: { name: "web_search", args: {} } },
+  ]);
+  assert.deepEqual(contents[2].parts, [
+    { functionResponse: { name: "web_search", response: { result: "result one" } } },
+    { functionResponse: { name: "web_search", response: { result: "result two" } } },
+  ]);
 });

@@ -7,14 +7,15 @@ import type {
 } from "../types.ts";
 
 /**
- * Anthropic content blocks. Plan 2a covers text and image only; `tool_use` /
- * `tool_result` arrive in Plan 6 when MCP gives them a consumer, and thinking blocks are
- * unscheduled (design spec §2.2).
+ * Anthropic content blocks: text, image, and (native MCP tool-calling mode, design spec
+ * §6) `tool_use`/`tool_result`. Thinking blocks remain unscheduled (design spec §2.2).
  */
 export type AnthropicContentBlock =
   | { type: "text"; text: string }
   | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
-  | { type: "image"; source: { type: "url"; url: string } };
+  | { type: "image"; source: { type: "url"; url: string } }
+  | { type: "tool_use"; id: string; name: string; input: unknown }
+  | { type: "tool_result"; tool_use_id: string; content: string };
 
 interface OpenAIImagePart {
   type: "image_url";
@@ -115,9 +116,138 @@ function mapSamplingParams(body: Record<string, unknown>): Record<string, unknow
   return out;
 }
 
-interface AnthropicMessage {
+export interface AnthropicMessage {
   role: string;
   content: AnthropicContentBlock[];
+}
+
+/**
+ * Native MCP tool-calling mode (design spec §6, §6.1). Field names verified against the
+ * current Anthropic Messages API: tool definitions use `{name, description, input_schema}`
+ * (input_schema, NOT parameters), and an assistant tool invocation is a content block
+ * `{type: "tool_use", id, name, input}` where `input` is an already-parsed object — NOT a
+ * JSON string the way OpenAI's `tool_calls[].function.arguments` arrives.
+ */
+export type AnthropicToolDef = {
+  name: string;
+  description: string;
+  input_schema: unknown;
+};
+
+/** OpenAI-style `tools: [{type:"function", function:{name, description, parameters}}]`. */
+interface OpenAiToolDef {
+  type: "function";
+  function: { name: string; description: string; parameters: unknown };
+}
+
+/** Maps the OpenAI tool list to Anthropic's `{name, description, input_schema}` shape. */
+export function mapAnthropicTools(tools: unknown): AnthropicToolDef[] {
+  if (!Array.isArray(tools)) return [];
+  const out: AnthropicToolDef[] = [];
+  for (const tool of tools) {
+    if (typeof tool !== "object" || tool === null) continue;
+    const fn = (tool as { function?: unknown }).function;
+    if (typeof fn !== "object" || fn === null) continue;
+    const f = fn as { name?: unknown; description?: unknown; parameters?: unknown };
+    if (typeof f.name !== "string") continue;
+    out.push({
+      name: f.name,
+      description: typeof f.description === "string" ? f.description : "",
+      input_schema: f.parameters ?? { type: "object", properties: {} },
+    });
+  }
+  return out;
+}
+
+/**
+ * Maps OpenAI history to Anthropic messages, including the native-mode additions
+ * (design spec §6): assistant `tool_calls` become `tool_use` content blocks, and a run of
+ * consecutive `role:"tool"` messages (each a `tool_result`) collapse into ONE Anthropic
+ * `user` message. This is NOT optional — emitting one user message per tool result produces
+ * "tool_use ids were found without tool_result blocks immediately after", a hard 400.
+ *
+ * Two real constraints shape this:
+ *   1. Anthropic requires every `tool_use` to be answered by a `tool_result` in the same
+ *      conversation, so the merge must flush ONLY when the next message is NOT a tool result.
+ *   2. `tool_result` blocks must lead the content array (Anthropic 400s on text-before-result
+ *      ordering), so the merged user message carries nothing but the result blocks.
+ */
+export function mapMessagesToAnthropic(messages: OpenAIMessage[]): AnthropicMessage[] {
+  const out: AnthropicMessage[] = [];
+
+  for (const m of messages) {
+    if (m.role === "tool") {
+      // Buffer tool results and flush them as a single merged user message when the run ends.
+      const last = out[out.length - 1];
+      const result = {
+        type: "tool_result" as const,
+        tool_use_id: String(m.tool_call_id ?? ""),
+        content: typeof m.content === "string" ? m.content : blockToText(m.content),
+      };
+      if (last && last.role === "user" && last.content[0]?.type === "tool_result") {
+        // Already mid-merge of a tool run — append to the same user message. Checking the
+        // FIRST block's type (not just `role === "user" && content.length > 0`) matters:
+        // the loose check would also merge a tool_result into a plain, non-tool-result user
+        // message (e.g. a client-supplied `role:"user"` turn immediately followed by a
+        // `role:"tool"` message), producing `[text, tool_result]` ordering — which point 2
+        // of this function's own docstring says Anthropic 400s on. Not reachable via
+        // loop.ts's own construction (it always inserts an `assistant(tool_calls)` message
+        // before any tool-result run), but mirrors the equivalent, already-correct guard in
+        // `gemini/request.ts`'s `mapMessagesToGemini`, and closes the gap for any future
+        // caller that builds messages differently.
+        last.content.push(result);
+      } else {
+        out.push({ role: "user", content: [result] });
+      }
+      continue;
+    }
+
+    if (m.role === "assistant" && Array.isArray(m.tool_calls) && m.tool_calls.length > 0) {
+      const content: AnthropicContentBlock[] = [];
+      const text = blockToText(m.content);
+      if (text.length > 0) content.push({ type: "text", text });
+      for (const call of m.tool_calls) {
+        const fn = (call as { function?: unknown }).function;
+        const name =
+          call.name ??
+          (typeof fn === "object" && fn !== null ? (fn as { name?: unknown }).name : undefined);
+        let input: unknown = {};
+        if (typeof call.arguments === "string") {
+          try {
+            input = JSON.parse(call.arguments);
+          } catch {
+            input = {};
+          }
+        } else if (fn && typeof fn === "object" && "arguments" in fn) {
+          const fa = (fn as { arguments?: unknown }).arguments;
+          if (typeof fa === "string") {
+            try {
+              input = JSON.parse(fa);
+            } catch {
+              input = {};
+            }
+          } else if (fa && typeof fa === "object") {
+            input = fa;
+          }
+        }
+        content.push({
+          type: "tool_use",
+          id: String(call.id ?? ""),
+          name: typeof name === "string" ? name : "",
+          input,
+        });
+      }
+      out.push({ role: "assistant", content });
+      continue;
+    }
+
+    out.push({
+      role: m.role === "assistant" ? "assistant" : "user",
+      content: toContentBlocks(m.content),
+    });
+  }
+
+  return out;
 }
 
 /**
@@ -263,12 +393,12 @@ export const anthropicConverter: RequestConverter = {
     const system = hoistedSystem(systemBlocks, incoming);
 
     // Map to Anthropic shape, dropping the system messages already hoisted in step 1.
-    let messages: AnthropicMessage[] = incoming
-      .filter((m) => m.role !== "system")
-      .map((m) => ({
-        role: m.role === "assistant" ? "assistant" : "user",
-        content: toContentBlocks(m.content),
-      }));
+    // Native mode uses mapMessagesToAnthropic so assistant tool_calls and tool results are
+    // preserved (design spec §6); the plain map above is a non-native fallback path.
+    const tools = Array.isArray(body.tools) ? mapAnthropicTools(body.tools) : null;
+    let messages: AnthropicMessage[] = mapMessagesToAnthropic(
+      incoming.filter((m) => m.role !== "system")
+    );
 
     // 2. Leading assistant greeting -> absorbed into system (§6.3 #4).
     const led = absorbLeadingAssistant(messages);
@@ -299,6 +429,13 @@ export const anthropicConverter: RequestConverter = {
       max_tokens,
       ...mapSamplingParams(body),
     };
+    // Native MCP tool-calling mode (design spec §6, §6.1): when the operator enabled MCP
+    // tools, advertise them and ALWAYS force tool_choice to "auto" so the model may use them
+    // or not — a client-supplied tool_choice (e.g. "none") must be ignored, never forwarded.
+    if (tools && tools.length > 0) {
+      out.tools = tools;
+      out.tool_choice = { type: "auto" };
+    }
     if (system.length > 0) out.system = system;
     if (body.stream === true) out.stream = true;
 

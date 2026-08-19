@@ -5,11 +5,20 @@ import type {
   RequestConverter,
   TaggedBlock,
 } from "../types.ts";
+import {
+  thoughtSignatureFromToolCall,
+  withThoughtSignature,
+} from "../../../src/lib/mcp/geminiThoughtSignature.ts";
 
-/** A Gemini content part. Plan 2c covers text only; inbound images and functionCall/
- * functionResponse parts arrive with their consumers in a later plan (design spec §2.2). */
+/** A Gemini content part. Native MCP mode adds `functionCall` (design spec §6.2). The
+ * `thoughtSignature` field is part of a `functionCall` part — Gemini 3 requires it to be
+ * echoed back on the next turn to keep the reasoning chain valid (design spec §6.2, verified
+ * against the current Gemini docs: it is a SIBLING of `functionCall` on the same Part, camelCase). */
 export interface GeminiPart {
-  text: string;
+  text?: string;
+  functionCall?: { name: string; args: unknown };
+  thoughtSignature?: string;
+  functionResponse?: { name: string; response: { result: string } };
 }
 
 /** A Gemini `contents[]` entry. Role is `user` or `model` — there is no `system` role here
@@ -17,6 +26,114 @@ export interface GeminiPart {
 export interface GeminiContent {
   role: "user" | "model";
   parts: GeminiPart[];
+}
+
+/** OpenAI-style `tools: [{type:"function", function:{name, description, parameters}}]`. */
+interface OpenAiToolDef {
+  type: "function";
+  function: { name: string; description: string; parameters: unknown };
+}
+
+/**
+ * Native MCP tool-calling mode (design spec §6.2). Maps the OpenAI tool list to Gemini's
+ * `functionDeclarations` shape: `{name, description, parameters}` — note Gemini reuses the
+ * OpenAPI `parameters` key (Anthropic renames it to `input_schema`; Gemini keeps `parameters`).
+ */
+export function mapGeminiFunctionDeclarations(tools: unknown): unknown[] {
+  if (!Array.isArray(tools)) return [];
+  const out: unknown[] = [];
+  for (const tool of tools) {
+    if (typeof tool !== "object" || tool === null) continue;
+    const fn = (tool as { function?: unknown }).function;
+    if (typeof fn !== "object" || fn === null) continue;
+    const f = fn as { name?: unknown; description?: unknown; parameters?: unknown };
+    if (typeof f.name !== "string") continue;
+    out.push({
+      name: f.name,
+      description: typeof f.description === "string" ? f.description : "",
+      parameters: f.parameters ?? { type: "object", properties: {} },
+    });
+  }
+  return out;
+}
+
+/**
+ * Maps OpenAI history to Gemini `contents`, including the native-mode additions
+ * (design spec §6.2): assistant `tool_calls` become `{role:"model", parts:[{functionCall}]}`,
+ * and a run of consecutive `role:"tool"` messages collapse into ONE `{role:"user",
+ * parts:[{functionResponse}]}` content. Gemini requires every `functionCall` to be answered
+ * by a `functionResponse` in a `user` turn, and — like Anthropic — one user message per tool
+ * result is rejected, so the merge is mandatory.
+ */
+export function mapMessagesToGemini(messages: OpenAIMessage[]): GeminiContent[] {
+  const out: GeminiContent[] = [];
+
+  for (const m of messages) {
+    if (m.role === "tool") {
+      const last = out[out.length - 1];
+      const response = {
+        functionResponse: {
+          name: String(m.name ?? ""),
+          response: { result: typeof m.content === "string" ? m.content : partsToText(m.content) },
+        },
+      };
+      if (
+        last &&
+        last.role === "user" &&
+        (last.parts.length === 0 || "functionResponse" in last.parts[0])
+      ) {
+        // Already mid-merge of a tool run — append to the same user content.
+        last.parts.push(response);
+      } else {
+        out.push({ role: "user", parts: [response] });
+      }
+      continue;
+    }
+
+    if (m.role === "assistant" && Array.isArray(m.tool_calls) && m.tool_calls.length > 0) {
+      const parts: GeminiPart[] = [];
+      const text = partsToText(m.content);
+      if (text.length > 0) parts.push({ text });
+      for (const call of m.tool_calls) {
+        const fn = (call as { function?: unknown }).function;
+        const name =
+          call.name ??
+          (typeof fn === "object" && fn !== null ? (fn as { name?: unknown }).name : undefined);
+        let args: unknown = {};
+        if (typeof call.arguments === "string") {
+          try {
+            args = JSON.parse(call.arguments);
+          } catch {
+            args = {};
+          }
+        } else if (fn && typeof fn === "object" && "arguments" in fn) {
+          const fa = (fn as { arguments?: unknown }).arguments;
+          if (typeof fa === "string") {
+            try {
+              args = JSON.parse(fa);
+            } catch {
+              args = {};
+            }
+          } else if (fa && typeof fa === "object") {
+            args = fa;
+          }
+        }
+        const part: GeminiPart = {
+          functionCall: { name: typeof name === "string" ? name : "", args },
+        };
+        parts.push(withThoughtSignature(part, thoughtSignatureFromToolCall(call)));
+      }
+      out.push({ role: "model", parts });
+      continue;
+    }
+
+    out.push({
+      role: m.role === "assistant" ? "model" : "user",
+      parts: toGeminiParts(m.content),
+    });
+  }
+
+  return out;
 }
 
 interface OpenAITextPart {
@@ -180,12 +297,12 @@ export const geminiConverter: RequestConverter = {
 
     const systemParts = hoistedSystemParts(systemBlocks, incoming);
 
-    let contents: GeminiContent[] = incoming
-      .filter((m) => m.role !== "system")
-      .map((m) => ({
-        role: m.role === "assistant" ? ("model" as const) : ("user" as const),
-        parts: toGeminiParts(m.content),
-      }));
+    // Native mode uses mapMessagesToGemini so assistant tool_calls and tool responses are
+    // preserved (design spec §6.2); the plain map above is a non-native fallback path.
+    const tools = Array.isArray(body.tools) ? mapGeminiFunctionDeclarations(body.tools) : null;
+    let contents: GeminiContent[] = mapMessagesToGemini(
+      incoming.filter((m) => m.role !== "system")
+    );
 
     // Leading model greeting -> systemInstruction (runs before placement so depths measure
     // against the real conversation).
@@ -206,6 +323,13 @@ export const geminiConverter: RequestConverter = {
       contents,
       generationConfig: mapGenerationConfig(body, maxOutputTokens),
     };
+    // Native MCP tool-calling mode (design spec §6.2): when the operator enabled MCP tools,
+    // advertise them as `functionDeclarations` and ALWAYS force `toolConfig.mode` to "AUTO" so
+    // the model may use them or not. A client-supplied tool_choice must be ignored.
+    if (tools && tools.length > 0) {
+      out.tools = [{ functionDeclarations: tools }];
+      out.toolConfig = { functionCallingConfig: { mode: "AUTO" } };
+    }
     if (systemParts.length > 0) out.systemInstruction = { parts: systemParts };
 
     return out;

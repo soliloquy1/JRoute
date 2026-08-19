@@ -1,16 +1,11 @@
 // jroute/handleChat.ts
 import { z } from "zod";
 import { jsonError } from "./errors.ts";
-import { listConnections, markCooldown, clearCooldown } from "../src/lib/db/connections.ts";
 import { logUsage } from "../src/lib/db/usageLogs.ts";
-import { recordUsage, parseQuotaThresholds, isOverQuota } from "../src/lib/db/quotaWindows.ts";
+import { recordUsage } from "../src/lib/db/quotaWindows.ts";
 import { getOAuthToken, isTokenValid } from "../src/lib/db/oauthTokens.ts";
 import { oauthTokenKey } from "../src/lib/oauth/tokenKey.ts";
-import { refreshOAuthToken } from "../src/lib/oauth/refresh.ts";
-import { eligibleConnections, applyFallbackStrategy } from "./selectConnection.ts";
-import { getFallbackStrategy } from "../src/lib/db/settings.ts";
-import { getLastConnectionId, setLastConnectionId } from "../src/lib/db/providerRoutingState.ts";
-import { execute, cooldownMsFor } from "./executor.ts";
+import { dispatchWithFailover } from "./dispatchAttempt.ts";
 import { keepaliveStream, sseHeaders } from "./sse.ts";
 import { resolveModel } from "./resolveModel.ts";
 import { getConverter } from "./convert/registry.ts";
@@ -22,6 +17,7 @@ import { getPreset } from "../src/lib/db/presets.ts";
 import { getRichPreset } from "../src/lib/db/richPresets.ts";
 import { assembleRichPreset } from "../src/lib/prompts/richAssemble.ts";
 import { runTriggerMode } from "../src/lib/mcp/trigger.ts";
+import { runNativeToolLoop } from "../src/lib/mcp/loop.ts";
 import { getLogitBiasPreset } from "../src/lib/db/logitBiasPresets.ts";
 import { computeLogitBias } from "../src/lib/prompts/logitBias.ts";
 import { debugLog, debugLogError, redactHeaders } from "../src/lib/debugLog/logger.ts";
@@ -44,6 +40,30 @@ function extractLastUserMessage(messages: Array<{ role: string; content?: unknow
     }
   }
   return "";
+}
+
+/** Synthesizes a single-chunk SSE stream for a completed native-mode answer. Native mode is
+ * always non-streaming internally (design spec §5); when the client asked for `stream:true` we
+ * wrap the final aggregated text in one `chat.completion.chunk` plus `[DONE]` so the response
+ * looks like a normal OpenAI SSE stream to the client. `finish_reason` is always `"stop"` —
+ * there is no token-level streaming to end, and a native tool round that produced text is a
+ * completed, stop-worthy turn. */
+function buildSyntheticSseStream(text: string, model: string): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  const chunk = {
+    id: `chatcmpl-${Date.now()}`,
+    object: "chat.completion.chunk",
+    created: Math.floor(Date.now() / 1000),
+    model,
+    choices: [{ index: 0, delta: { role: "assistant", content: text }, finish_reason: "stop" }],
+  };
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      controller.close();
+    },
+  });
 }
 
 // `looseObject` (not `object`) at BOTH levels. A plain `z.object` strips unknown keys,
@@ -228,21 +248,107 @@ export async function handleChat(
     return jsonError(503, `No converter for wire format: ${provider.wireFormat}`);
   }
 
-  const fallbackStrategy = getFallbackStrategy();
-  const candidates = applyFallbackStrategy(
-    eligibleConnections(listConnections(providerId), Date.now(), isOverQuota),
-    fallbackStrategy,
-    providerId,
-    getLastConnectionId
-  );
-  debugLog("connections.eligible", {
-    requestId,
-    providerId,
-    candidateCount: candidates.length,
-    candidateIds: candidates.map((c) => c.id),
-  });
-  if (candidates.length === 0) {
-    return jsonError(503, "No available connection");
+  // Native tool-calling mode (design spec §5, §8): run the multi-round tool loop instead of a
+  // single upstream shot. Every other tool mode (trigger/off) falls through to the unchanged
+  // single-shot path below. The branch is placed AFTER the converter resolves because the loop
+  // needs `provider`/`upstreamModel`/`tokenResolver`/`converter`, all resolved here.
+  if (key.toolMode === "native") {
+    const responseConverter = getResponseConverter(provider.wireFormat);
+    const loopResult = await runNativeToolLoop({
+      provider,
+      providerId,
+      upstreamModel,
+      requestedModel,
+      maxTokens: resolved.maxTokens,
+      clientBody: body,
+      blocks,
+      converter,
+      responseConverter,
+      signal: req.signal,
+      tokenResolver,
+      requestId,
+      fetchImpl,
+    });
+
+    if (loopResult.ok === false) {
+      // Same client-hangup contract as the non-native dispatch path below (`dispatch.clientAborted`
+      // at ~line 387): no usage row, no surfaced error message. `jsonError(0, "")` would throw a
+      // RangeError (`Response` requires a status in [200, 599]) — a real mid-loop client
+      // disconnect hit this uncaught before this guard existed.
+      if (loopResult.clientAborted) {
+        return new Response(null, { status: 499 });
+      }
+      const failureMessage =
+        provider.wireFormat === "anthropic"
+          ? mapAnthropicErrorMessage(loopResult.message)
+          : loopResult.message;
+      debugLog("response.native_failure", {
+        requestId,
+        status: loopResult.status,
+        failureMessage,
+      });
+      logUsage({
+        apiKeyId: key.id,
+        providerId,
+        connectionId: loopResult.connectionId,
+        model: upstreamModel,
+        promptTokens: null,
+        outputTokens: null,
+        latencyMs: Date.now() - startedAt,
+        toolRounds: 0,
+        error: failureMessage,
+      });
+      return jsonError(loopResult.status, failureMessage);
+    }
+
+    debugLog("response.native_success", {
+      requestId,
+      connectionId: loopResult.connectionId,
+      roundsUsed: loopResult.roundsUsed,
+    });
+    logUsage({
+      apiKeyId: key.id,
+      providerId,
+      connectionId: loopResult.connectionId,
+      model: upstreamModel,
+      promptTokens: loopResult.usage.promptTokens,
+      outputTokens: loopResult.usage.completionTokens,
+      latencyMs: Date.now() - startedAt,
+      toolRounds: loopResult.roundsUsed,
+      error: null,
+    });
+
+    if (body.stream === true) {
+      return new Response(
+        keepaliveStream(buildSyntheticSseStream(loopResult.finalText, requestedModel)),
+        {
+          status: 200,
+          headers: sseHeaders(),
+        }
+      );
+    }
+
+    return new Response(
+      JSON.stringify({
+        id: `chatcmpl-${Date.now()}`,
+        object: "chat.completion",
+        created: Math.floor(Date.now() / 1000),
+        model: requestedModel,
+        choices: [
+          {
+            index: 0,
+            message: { role: "assistant", content: loopResult.finalText },
+            finish_reason: "stop",
+          },
+        ],
+        usage: {
+          prompt_tokens: loopResult.usage.promptTokens,
+          completion_tokens: loopResult.usage.completionTokens,
+          total_tokens: loopResult.usage.promptTokens + loopResult.usage.completionTokens,
+        },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
   }
 
   // Converted once, outside the failover loop: every connection for a provider speaks the
@@ -257,316 +363,193 @@ export async function handleChat(
   });
   debugLog("request.converted", { requestId, wireFormat: provider.wireFormat, upstreamBody });
 
-  // A real upstream attempt and a skipped-before-dialling connection are tracked
-  // SEPARATELY. Sharing one `lastMessage` let a decrypt-failed connection sitting
-  // *behind* a genuinely failing one rewrite the failure story: the status stayed the
-  // real 503 while the message became "credential could not be decrypted", so the
-  // response and the `usage_logs` row Plan 7's dashboard reads both recorded the wrong
-  // cause. The credential reason is only surfaced when no real attempt ever produced one.
-  let lastStatus: number | null = null;
-  let lastMessage: string | null = null;
-  let lastConnectionId: number | null = null;
-  let skippedDecryptFailed = false;
-  // Phase 2: at most one refresh-then-retry per connection per request — prevents an
-  // upstream that keeps returning 401 even with a fresh token from looping forever.
-  const oauthRefreshedConnectionIds = new Set<number>();
+  // Candidate resolution, decrypt-failure skipping, the OAuth 401 refresh-then-retry, per-dial
+  // quota recording, cooldown marking and failure-message resolution all live in
+  // `dispatchWithFailover` now — same logic, one call site deeper, so native tool-calling
+  // mode's per-round dispatch (src/lib/mcp/loop.ts) reuses it instead of reimplementing it.
+  const dispatch = await dispatchWithFailover({
+    provider,
+    providerId,
+    upstreamModel,
+    upstreamBody,
+    // The stream flag comes from the CLIENT request body, NOT from `upstreamBody`: the
+    // Gemini converter strips `stream` from the converted body (streaming is a URL concern
+    // there), so `upstreamBody.stream` is always undefined and the streaming URL would
+    // never be selected. `body` here is the parsed pre-conversion client request.
+    clientWantsStream: body.stream === true,
+    signal: req.signal,
+    tokenResolver,
+    requestId,
+    fetchImpl,
+  });
 
-  for (let attempt = 0; attempt < candidates.length; attempt += 1) {
-    const connection = candidates[attempt];
-
-    // The connection's configured quota window length (Phase 2 fix): recordUsage must
-    // bucket into the SAME windowMs that isOverQuota reads, or a non-60s threshold never
-    // trips. Falls back to the 60s default when unset/garbage.
-    const windowMs =
-      parseQuotaThresholds(connection.quotaWindowThresholds).windowMs ?? 60_000;
-
-    // Operator addition B: skip connections whose credential could not be decrypted.
-    // This is a config problem (rotated/lost STORAGE_ENCRYPTION_KEY), not a connection
-    // health issue. Do not cool down — just skip and let healthy connections behind it
-    // get their turn. If every candidate is in this state, the operator gets the
-    // distinct "could not be decrypted" reason rather than a generic upstream failure.
-    if (connection.credentialDecryptFailed) {
-      skippedDecryptFailed = true;
-      debugLog("connection.skipped_decrypt_failed", { requestId, connectionId: connection.id });
-      continue;
-    }
-
-    // Same skip, for the oauth_tokens ciphertext (bug #6148 class): without this, a
-    // decrypt-failed token silently resolves to null in tokenResolver and the executor
-    // fires with an empty bearer — a blind 401 that looks like a real auth failure
-    // instead of the operator-fixable "STORAGE_ENCRYPTION_KEY changed" cause.
-    if (provider.kind === "oauth") {
-      const tokenRow = getOAuthToken(oauthTokenKey(provider), connection.id);
-      if (tokenRow?.credentialDecryptFailed) {
-        skippedDecryptFailed = true;
-        debugLog("connection.skipped_oauth_decrypt_failed", { requestId, connectionId: connection.id });
-        continue;
-      }
-    }
-
-    debugLog("upstream.attempt", {
-      requestId,
-      attempt,
-      connectionId: connection.id,
-      connectionLabel: connection.label,
-      providerId,
-    });
-
-    const result = await execute(
-      {
-        provider,
-        connection,
-        body: upstreamBody,
-        signal: req.signal,
-        model: upstreamModel,
-        // The stream flag comes from the CLIENT request body, NOT from `upstreamBody`: the
-        // Gemini converter strips `stream` from the converted body (streaming is a URL concern
-        // there), so `upstreamBody.stream` is always undefined and the streaming URL would
-        // never be selected. `body` here is the parsed pre-conversion client request.
-        stream: body.stream === true,
-        tokenResolver,
-      },
-      fetchImpl
-    );
-
-    // Phase 3/4: attribute this upstream attempt to the connection's rolling quota
-    // window (1 request per dial; tokens are added once known below). Failed attempts
-    // (e.g. 429) also consume the provider's limit, so they count too. Wrapped in
-    // try/catch: with foreign_keys=ON a stale/ghost connection id can throw inside the
-    // stream-completion callback, and a throw here must not abort the failover loop.
-    try {
-      recordUsage(connection.id, 1, 0, Date.now(), windowMs);
-    } catch (err) {
-      debugLogError("quota.record_failed", { connectionId: connection.id, error: String(err) });
-    }
-
-    debugLog("upstream.result", {
-      requestId,
-      attempt,
-      connectionId: connection.id,
-      ok: result.ok,
-      status: result.status,
-      errorMessage: result.errorMessage,
-      retryable: result.retryable,
-      isStream: result.stream !== null,
-    });
-
-    // Operator addition A: honor the client-hangup contract.
-    // Executor signals an abort as status === 0 AND errorMessage === null.
-    // A genuine transport failure is status === 0 with a non-null errorMessage and
-    // retryable: true. For an abort we must NOT write a usage row claiming an upstream
-    // error (it would corrupt dashboard error stats), must NOT cool down the connection
-    // (the upstream may be perfectly healthy), and must NOT fail over.
-    if (result.status === 0 && result.errorMessage === null) {
-      debugLog("request.client_aborted", { requestId, attempt, connectionId: connection.id });
+  // `=== false`, not `!dispatch.ok`: this repo compiles with `strict: false`, and with
+  // `strictNullChecks` off TypeScript does not narrow a discriminated union by the
+  // truthiness of a boolean-literal discriminant (verified by running tsc both ways) —
+  // explicit equality does narrow, in both directions.
+  if (dispatch.ok === false) {
+    // Operator addition A: honor the client-hangup contract. No usage row (it would corrupt
+    // dashboard error stats) and no surfaced error message; the no-cooldown/no-failover half
+    // of that contract is enforced inside dispatchWithFailover.
+    if (dispatch.clientAborted) {
       return new Response(null, { status: 499 });
     }
 
-    if (result.ok) {
-      clearCooldown(connection.id);
-      // Phase 4: only the round-robin strategy consults this cursor (selectConnection.ts's
-      // applyFallbackStrategy), so only bother writing it under that strategy.
-      if (fallbackStrategy === "round-robin") {
-        setLastConnectionId(providerId, connection.id);
-      }
+    // No connection was eligible to dial. Answered bare — no `response.failure` line and no
+    // `usage_logs` row — exactly as this path behaved before the dispatch extraction: a
+    // request that never reached an upstream is an operator misconfiguration, not an
+    // upstream error to attribute to a connection.
+    if (dispatch.noCandidates) {
+      return jsonError(dispatch.status, dispatch.message);
+    }
 
-      if (result.stream) {
-        const streamConverter = getStreamConverter(provider.wireFormat);
-        if (!streamConverter) {
-          // OpenAI path: unchanged from Plan 1 — already OpenAI-shaped, log immediately
-          // with null tokens. Accurate streaming usage for OpenAI is out of this plan's
-          // scope (see Global Constraints — Deliberate scope boundary).
-          logUsage({
-            apiKeyId: key.id,
-            providerId,
-            connectionId: connection.id,
-            model: upstreamModel,
-            promptTokens: null,
-            outputTokens: null,
-            latencyMs: Date.now() - startedAt,
-            toolRounds: 0,
-            error: null,
-          });
-          debugLog("response.success", {
-            requestId,
-            connectionId: connection.id,
-            stream: true,
-            wireFormat: provider.wireFormat,
-          });
-          return new Response(keepaliveStream(result.stream), {
-            status: 200,
-            headers: sseHeaders(),
-          });
-        }
+    // Anthropic-specific message refinement (e.g. billing_error vs. a generic 403) — a no-op
+    // for any message that isn't Anthropic's JSON error shape (§10's default: pass through).
+    const failureMessage =
+      provider.wireFormat === "anthropic"
+        ? mapAnthropicErrorMessage(dispatch.message)
+        : dispatch.message;
 
-        // Anthropic path: usage is deferred to stream completion (design spec §9) — the
-        // row is written exactly once, when the stream actually ends, whether that is a
-        // natural finish, an upstream failure mid-stream, or the client hanging up after
-        // real tokens were already spent (the post-dial hangup rule).
-        const wrapped = streamConverter.wrap(result.stream, requestedModel, (completion) => {
-          const error =
-            completion.reason === "completed"
-              ? null
-              : completion.reason === "client-hangup"
-                ? "client disconnected mid-stream"
-                : "upstream connection closed unexpectedly";
-          debugLog("response.stream_completed", {
-            requestId,
-            connectionId: connection.id,
-            reason: completion.reason,
-            promptTokens: completion.promptTokens,
-            outputTokens: completion.outputTokens,
-          });
-          // Phase 3/4: fold the realized token usage into the rolling quota window.
-          try {
-            recordUsage(
-              connection.id,
-              0,
-              (completion.promptTokens ?? 0) + (completion.outputTokens ?? 0),
-              Date.now(),
-              windowMs
-            );
-          } catch (err) {
-            debugLogError("quota.record_failed", { connectionId: connection.id, error: String(err) });
-          }
-          logUsage({
-            apiKeyId: key.id,
-            providerId,
-            connectionId: connection.id,
-            model: upstreamModel,
-            promptTokens: completion.promptTokens,
-            outputTokens: completion.outputTokens,
-            latencyMs: Date.now() - startedAt,
-            toolRounds: 0,
-            error,
-          });
-        });
-        debugLog("response.success", {
-          requestId,
-          connectionId: connection.id,
-          stream: true,
-          wireFormat: provider.wireFormat,
-        });
-        return new Response(keepaliveStream(wrapped), { status: 200, headers: sseHeaders() });
-      }
+    debugLog("response.failure", {
+      requestId,
+      failureStatus: dispatch.status,
+      failureMessage,
+      lastConnectionId: dispatch.connectionId,
+      skippedDecryptFailed: dispatch.skippedDecryptFailed,
+    });
+    logUsage({
+      apiKeyId: key.id,
+      providerId,
+      connectionId: dispatch.connectionId,
+      model: upstreamModel,
+      promptTokens: null,
+      outputTokens: null,
+      latencyMs: Date.now() - startedAt,
+      toolRounds: 0,
+      error: failureMessage,
+    });
+    return jsonError(dispatch.status, failureMessage);
+  }
 
-      const responseConverter = getResponseConverter(provider.wireFormat);
-      const outJson = responseConverter
-        ? responseConverter.convertResponse(result.json, requestedModel)
-        : result.json;
-      const usage = (outJson as { usage?: UpstreamUsage } | null)?.usage;
-      // Phase 3/4: fold the token usage into the rolling quota window now that we know it.
-      try {
-        recordUsage(
-          connection.id,
-          0,
-          (usage?.prompt_tokens ?? 0) + (usage?.completion_tokens ?? 0),
-          Date.now(),
-          windowMs
-        );
-      } catch (err) {
-        debugLogError("quota.record_failed", { connectionId: connection.id, error: String(err) });
-      }
-      debugLog("response.success", {
-        requestId,
-        connectionId: connection.id,
-        stream: false,
-        wireFormat: provider.wireFormat,
-        outJson,
-      });
+  const { connectionId, windowMs, result } = dispatch;
+
+  if (result.stream) {
+    const streamConverter = getStreamConverter(provider.wireFormat);
+    if (!streamConverter) {
+      // OpenAI path: unchanged from Plan 1 — already OpenAI-shaped, log immediately
+      // with null tokens. Accurate streaming usage for OpenAI is out of this plan's
+      // scope (see Global Constraints — Deliberate scope boundary).
       logUsage({
         apiKeyId: key.id,
         providerId,
-        connectionId: connection.id,
+        connectionId,
         model: upstreamModel,
-        promptTokens: usage?.prompt_tokens ?? null,
-        outputTokens: usage?.completion_tokens ?? null,
+        promptTokens: null,
+        outputTokens: null,
         latencyMs: Date.now() - startedAt,
         toolRounds: 0,
         error: null,
       });
-      return new Response(JSON.stringify(outJson), {
+      debugLog("response.success", {
+        requestId,
+        connectionId,
+        stream: true,
+        wireFormat: provider.wireFormat,
+      });
+      return new Response(keepaliveStream(result.stream), {
         status: 200,
-        headers: { "content-type": "application/json" },
+        headers: sseHeaders(),
       });
     }
 
-    // Phase 2: an oauth connection's 401 usually means the access token expired
-    // between our (skew-tolerant) validity check and the actual dial. Refresh once and
-    // retry the SAME connection before falling over to the next candidate — 429 is
-    // unaffected and keeps using the existing markCooldown path below.
-    if (result.status === 401 && provider.kind === "oauth") {
-      if (!oauthRefreshedConnectionIds.has(connection.id)) {
-        oauthRefreshedConnectionIds.add(connection.id);
-        const refreshed = await refreshOAuthToken(provider, connection.id);
-        if (refreshed) {
-          debugLog("oauth.token_refreshed_retry", { requestId, connectionId: connection.id });
-          attempt -= 1;
-          continue;
-        }
-        debugLog("oauth.refresh_failed", { requestId, connectionId: connection.id });
+    // Anthropic path: usage is deferred to stream completion (design spec §9) — the
+    // row is written exactly once, when the stream actually ends, whether that is a
+    // natural finish, an upstream failure mid-stream, or the client hanging up after
+    // real tokens were already spent (the post-dial hangup rule).
+    const wrapped = streamConverter.wrap(result.stream, requestedModel, (completion) => {
+      const error =
+        completion.reason === "completed"
+          ? null
+          : completion.reason === "client-hangup"
+            ? "client disconnected mid-stream"
+            : "upstream connection closed unexpectedly";
+      debugLog("response.stream_completed", {
+        requestId,
+        connectionId,
+        reason: completion.reason,
+        promptTokens: completion.promptTokens,
+        outputTokens: completion.outputTokens,
+      });
+      // Phase 3/4: fold the realized token usage into the rolling quota window.
+      try {
+        recordUsage(
+          connectionId,
+          0,
+          (completion.promptTokens ?? 0) + (completion.outputTokens ?? 0),
+          Date.now(),
+          windowMs
+        );
+      } catch (err) {
+        debugLogError("quota.record_failed", { connectionId, error: String(err) });
       }
-      // Refresh was already attempted (or just failed): this connection's credential
-      // is bad, but sibling connections for the same provider may still work — fail
-      // over instead of the generic "break on non-retryable status" path below, since
-      // a bare 401 is not in the executor's RETRYABLE set.
-      lastStatus = result.status || 502;
-      lastMessage = result.errorMessage ?? "Upstream error";
-      lastConnectionId = connection.id;
-      markCooldown(
-        connection.id,
-        Date.now() + cooldownMsFor(result.status, attempt, result.retryAfterMs),
-        lastMessage
-      );
-      continue;
-    }
-
-    lastStatus = result.status || 502;
-    lastMessage = result.errorMessage ?? "Upstream error";
-    // Attribute the failure row to the connection that actually produced it, so the
-    // dashboard can answer "which key is 503-ing" instead of just "something failed".
-    lastConnectionId = connection.id;
-
-    if (!result.retryable) break;
-    markCooldown(
-      connection.id,
-      Date.now() + cooldownMsFor(result.status, attempt, result.retryAfterMs),
-      lastMessage
-    );
+      logUsage({
+        apiKeyId: key.id,
+        providerId,
+        connectionId,
+        model: upstreamModel,
+        promptTokens: completion.promptTokens,
+        outputTokens: completion.outputTokens,
+        latencyMs: Date.now() - startedAt,
+        toolRounds: 0,
+        error,
+      });
+    });
+    debugLog("response.success", {
+      requestId,
+      connectionId,
+      stream: true,
+      wireFormat: provider.wireFormat,
+    });
+    return new Response(keepaliveStream(wrapped), { status: 200, headers: sseHeaders() });
   }
 
-  // A real attempt's outcome always wins. The credential reason is the fallback only
-  // when every candidate was skipped before a request was ever sent.
-  const failureStatus = lastStatus ?? 502;
-  const rawFailureMessage =
-    lastMessage ??
-    (skippedDecryptFailed
-      ? "Connection credential could not be decrypted"
-      : "All connections failed");
-  // Anthropic-specific message refinement (e.g. billing_error vs. a generic 403) — a no-op
-  // for any message that isn't Anthropic's JSON error shape (§10's default: pass through).
-  const failureMessage =
-    provider.wireFormat === "anthropic"
-      ? mapAnthropicErrorMessage(rawFailureMessage)
-      : rawFailureMessage;
-
-  debugLog("response.failure", {
+  const responseConverter = getResponseConverter(provider.wireFormat);
+  const outJson = responseConverter
+    ? responseConverter.convertResponse(result.json, requestedModel)
+    : result.json;
+  const usage = (outJson as { usage?: UpstreamUsage } | null)?.usage;
+  // Phase 3/4: fold the token usage into the rolling quota window now that we know it.
+  try {
+    recordUsage(
+      connectionId,
+      0,
+      (usage?.prompt_tokens ?? 0) + (usage?.completion_tokens ?? 0),
+      Date.now(),
+      windowMs
+    );
+  } catch (err) {
+    debugLogError("quota.record_failed", { connectionId, error: String(err) });
+  }
+  debugLog("response.success", {
     requestId,
-    failureStatus,
-    failureMessage,
-    lastConnectionId,
-    skippedDecryptFailed,
+    connectionId,
+    stream: false,
+    wireFormat: provider.wireFormat,
+    outJson,
   });
   logUsage({
     apiKeyId: key.id,
     providerId,
-    connectionId: lastConnectionId,
+    connectionId,
     model: upstreamModel,
-    promptTokens: null,
-    outputTokens: null,
+    promptTokens: usage?.prompt_tokens ?? null,
+    outputTokens: usage?.completion_tokens ?? null,
     latencyMs: Date.now() - startedAt,
     toolRounds: 0,
-    error: failureMessage,
+    error: null,
   });
-  return jsonError(failureStatus, failureMessage);
+  return new Response(JSON.stringify(outJson), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
 }

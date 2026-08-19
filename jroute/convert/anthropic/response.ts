@@ -5,7 +5,10 @@
  */
 export interface AnthropicResponseJson {
   id?: string;
-  content?: Array<{ type: string; text?: string }>;
+  content?: Array<
+    | { type: string; text?: string }
+    | { type: "tool_use"; id?: string; name?: string; input?: unknown }
+  >;
   stop_reason?: string | null;
   usage?: {
     input_tokens?: number;
@@ -27,7 +30,7 @@ const STOP_REASON_MAP: Record<string, string> = {
   end_turn: "stop",
   max_tokens: "length",
   stop_sequence: "stop",
-  tool_use: "tool_calls", // unreachable until Plan 6 (no tool support yet)
+  tool_use: "tool_calls", // native MCP tool-calling mode (design spec §7) — reachable now
   pause_turn: "stop",
   refusal: "content_filter",
 };
@@ -58,13 +61,35 @@ export function convertResponse(
   json: AnthropicResponseJson,
   requestedModel: string
 ): Record<string, unknown> {
-  const text = (json.content ?? [])
-    .filter((b) => b.type === "text")
+  const blocks = json.content ?? [];
+  const text = blocks
+    .filter((b): b is { type: "text"; text?: string } => b.type === "text")
     .map((b) => b.text ?? "")
     .join("");
+  // Native MCP mode (design spec §8.1): `content` may carry `tool_use` blocks. The pre-existing
+  // `tool_use: "tool_calls"` stop-reason map entry now gets exercised whenever Anthropic returns
+  // a tool invocation.
+  const toolUseBlocks = blocks.filter(
+    (b): b is { type: "tool_use"; id?: string; name?: string; input?: unknown } =>
+      b.type === "tool_use"
+  );
 
   const promptTokens = promptTokensFrom(json.usage);
   const completionTokens = json.usage?.output_tokens ?? 0;
+
+  const message: Record<string, unknown> = {
+    role: "assistant",
+    // A tool-only response has no conversational text — OpenAI uses `content: null` in that
+    // case. When text IS present alongside tool_use, keep it (the model may narrate + call).
+    content: toolUseBlocks.length > 0 && text.length === 0 ? null : text,
+  };
+  if (toolUseBlocks.length > 0) {
+    message.tool_calls = toolUseBlocks.map((b) => ({
+      id: b.id ?? `toolu_${Date.now()}`,
+      type: "function",
+      function: { name: b.name ?? "", arguments: JSON.stringify(b.input ?? {}) },
+    }));
+  }
 
   return {
     id: json.id ?? `chatcmpl-${Date.now()}`,
@@ -74,7 +99,7 @@ export function convertResponse(
     choices: [
       {
         index: 0,
-        message: { role: "assistant", content: text },
+        message,
         finish_reason: mapStopReason(json.stop_reason),
       },
     ],
