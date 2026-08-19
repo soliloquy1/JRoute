@@ -344,6 +344,35 @@ test("a dispatch failure propagates as the loop's own failure — not isolated l
   if (!result.ok) assert.equal(result.status, 503);
 });
 
+test('a client-abort dispatch failure propagates clientAborted:true — the caller must return a bare 499, not jsonError(0, "")', async () => {
+  const deps: NativeLoopDeps = {
+    dispatch: async () => ({
+      ok: false,
+      clientAborted: true,
+      noCandidates: false,
+      status: 0,
+      message: "",
+      connectionId: 1,
+      skippedDecryptFailed: false,
+    }),
+    getToolSet: async () => ({ tools: [], resolveServerForTool: () => null }),
+    connectClient: (async () => {
+      throw new Error("should not be called");
+    }) as never,
+    maxRounds: 5,
+    roundTimeoutMs: 15000,
+    totalTimeoutMs: 90000,
+    toolCallTimeoutMs: 15000,
+    toolResultMaxChars: 4000,
+  };
+  const result = await runNativeToolLoop(baseParams(), deps);
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.clientAborted, true);
+    assert.equal(result.status, 0);
+  }
+});
+
 test("total wall-clock budget exceeded returns a 504 before another round starts", async () => {
   const deps: NativeLoopDeps = {
     dispatch: async () => {

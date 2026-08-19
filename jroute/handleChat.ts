@@ -271,6 +271,13 @@ export async function handleChat(
     });
 
     if (loopResult.ok === false) {
+      // Same client-hangup contract as the non-native dispatch path below (`dispatch.clientAborted`
+      // at ~line 387): no usage row, no surfaced error message. `jsonError(0, "")` would throw a
+      // RangeError (`Response` requires a status in [200, 599]) — a real mid-loop client
+      // disconnect hit this uncaught before this guard existed.
+      if (loopResult.clientAborted) {
+        return new Response(null, { status: 499 });
+      }
       const failureMessage =
         provider.wireFormat === "anthropic"
           ? mapAnthropicErrorMessage(loopResult.message)

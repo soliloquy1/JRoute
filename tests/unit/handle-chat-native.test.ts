@@ -110,6 +110,27 @@ test("a native-mode key with stream:true gets a single-chunk SSE response, finis
   assert.ok(text.includes("data: [DONE]"));
 });
 
+test('a client disconnect mid-loop returns a bare 499, not an uncaught RangeError from jsonError(0, "")', async () => {
+  // Matches dispatchAttempt.ts's real abort detection: execute() classifies a fetch
+  // rejection as an abort when the error's `name` is "AbortError" (isAbort's err.name
+  // check alone is sufficient — the same pattern the non-native path's own
+  // dispatch-attempt.test.ts abort test uses), independent of whether the actual request
+  // signal object was aborted.
+  const fetchImpl = (async () => {
+    const err = new Error("The operation was aborted");
+    err.name = "AbortError";
+    throw err;
+  }) as unknown as typeof fetch;
+
+  const req = new Request("https://x/v1/chat/completions", {
+    method: "POST",
+    body: JSON.stringify({ model: "gpt-5.6-sol", messages: [{ role: "user", content: "hi" }] }),
+  });
+  const res = await handleChat(req, nativeKey(), { fetchImpl });
+  assert.equal(res.status, 499);
+  assert.equal(await res.text(), "");
+});
+
 test("a non-native (trigger/off) key's behavior is completely unaffected by this task", async () => {
   const fetchImpl = (async () =>
     new Response(JSON.stringify({ id: "x", choices: [{ message: { content: "unaffected" } }] }), {

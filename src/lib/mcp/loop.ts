@@ -48,6 +48,13 @@ export interface NativeLoopFailure {
   status: number;
   message: string;
   connectionId: number | null;
+  /** True when a round's dispatch failed because the CLIENT disconnected, not because the
+   * upstream failed (dispatchAttempt.ts's `DispatchFailure.clientAborted`). The caller
+   * (handleChat.ts) must return a bare `499` for this case, mirroring the non-native path's
+   * existing handling — `jsonError(status, message)` with `status: 0` throws a `RangeError`
+   * (`Response` requires a status in [200, 599]), which otherwise surfaces as an uncaught
+   * 500 on every mid-turn client disconnect during a native-mode loop. */
+  clientAborted: boolean;
 }
 
 export type NativeLoopResult = NativeLoopSuccess | NativeLoopFailure;
@@ -189,6 +196,7 @@ export async function runNativeToolLoop(
         status: 504,
         message: "native tool loop exceeded its time budget",
         connectionId: lastConnectionId,
+        clientAborted: false,
       };
     }
 
@@ -227,6 +235,7 @@ export async function runNativeToolLoop(
         status: dispatchResult.status,
         message: dispatchResult.message,
         connectionId: dispatchResult.connectionId,
+        clientAborted: dispatchResult.clientAborted,
       };
     }
     lastConnectionId = dispatchResult.connectionId;
@@ -288,5 +297,6 @@ export async function runNativeToolLoop(
     status: 500,
     message: "native tool loop exited without resolving",
     connectionId: lastConnectionId,
+    clientAborted: false,
   };
 }
