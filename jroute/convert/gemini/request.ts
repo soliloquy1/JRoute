@@ -220,15 +220,31 @@ export function hoistedSystemParts(
   messages: OpenAIMessage[]
 ): GeminiPart[] {
   const parts: GeminiPart[] = [];
+  const appendBlocks: TaggedBlock[] = [];
+
+  // Prepend-position blocks (any role other than "system-append", including plain
+  // "system" for backward compatibility) come first — before Janitor's own card.
   for (const b of systemBlocks) {
+    if (b.role === "system-append") {
+      appendBlocks.push(b);
+      continue;
+    }
     const text = partsToText(b.content);
     if (text.length > 0) parts.push({ text });
   }
+
   for (const m of messages) {
     if (m.role !== "system") continue;
     const text = partsToText(m.content);
     if (text.length > 0) parts.push({ text });
   }
+
+  // Design spec §6.1: append-position blocks are the last thing in the prompt.
+  for (const b of appendBlocks) {
+    const text = partsToText(b.content);
+    if (text.length > 0) parts.push({ text });
+  }
+
   return parts;
 }
 

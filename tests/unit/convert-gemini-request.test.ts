@@ -56,6 +56,30 @@ test("hoists system blocks into systemInstruction, not contents", () => {
   assert.ok(contents.every((c) => c.role === "user" || c.role === "model"));
 });
 
+test("a system-append block lands after Janitor's own system message, a system-prepend block before it", () => {
+  const out = geminiConverter.convertRequest(
+    params({
+      body: {
+        messages: [
+          { role: "system", content: "You are Ada, a character card." },
+          { role: "user", content: "hi" },
+        ],
+      },
+      blocks: [
+        { role: "system-append", content: "Remember the tone.", tag: "system-block" },
+        { role: "system-prepend", content: "JRoute jailbreak text.", tag: "system-block" },
+      ],
+    })
+  );
+  assert.deepEqual(out.systemInstruction, {
+    parts: [
+      { text: "JRoute jailbreak text." },
+      { text: "You are Ada, a character card." },
+      { text: "Remember the tone." },
+    ],
+  });
+});
+
 test("a client role:system message is hoisted into systemInstruction, not left in contents", () => {
   const out = geminiConverter.convertRequest(
     params({
